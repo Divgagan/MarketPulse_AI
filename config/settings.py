@@ -16,6 +16,19 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
+def get_secret(key: str) -> str:
+    """Try to get a secret from os.environ first, then Streamlit secrets."""
+    val = os.getenv(key)
+    if val:
+        return val
+    try:
+        import streamlit as st
+        if key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    return None
+
 # ── LLM Model Names ────────────────────────────────────────────────────────────
 # Rule 7 (LLM_INSTRUCTIONS): Use 70B for complex reasoning, 8B for simple tasks
 
@@ -29,14 +42,14 @@ MODEL_SECONDARY = "llama-3.1-8b-instant"
 MODEL_FALLBACK = "gemini-2.0-flash-exp"
 
 # ── API Keys ───────────────────────────────────────────────────────────────────
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")        # Optional — RSS feeds used if not set
-LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")  # Optional — for agent tracing
+GROQ_API_KEY = get_secret("GROQ_API_KEY")
+GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
+NEWSAPI_KEY = get_secret("NEWSAPI_KEY")        # Optional — RSS feeds used if not set
+LANGSMITH_API_KEY = get_secret("LANGSMITH_API_KEY")  # Optional — for agent tracing
 
 # ── Supabase (Cloud Database) ──────────────────────────────────────────────────
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_URL = get_secret("SUPABASE_URL")
+SUPABASE_KEY = get_secret("SUPABASE_KEY")
 
 # ── LangSmith Tracing (activates automatically if key is set) ──────────────────
 if LANGSMITH_API_KEY:
