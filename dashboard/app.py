@@ -41,17 +41,25 @@ IST = pytz.timezone("Asia/Kolkata")
 
 @st.cache_data(ttl=300)
 def load_today_signals() -> pd.DataFrame:
-    """Load today's predictions from SQLite. Cache for 5 minutes."""
+    """Load today's predictions from Supabase or SQLite. Cache for 5 minutes."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     try:
-        conn = sqlite3.connect(PREDICTIONS_DB)
-        df   = pd.read_sql_query(
-            "SELECT * FROM predictions WHERE date = ? ORDER BY final_confidence DESC",
-            conn, params=(today,)
-        )
-        conn.close()
-        return df
-    except Exception:
+        from config.settings import SUPABASE_URL, SUPABASE_KEY
+        if SUPABASE_URL and SUPABASE_KEY:
+            from supabase import create_client
+            supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+            res = supabase.table("predictions").select("*").eq("date", today).order("final_confidence", desc=True).execute()
+            return pd.DataFrame(res.data)
+        else:
+            conn = sqlite3.connect(PREDICTIONS_DB)
+            df   = pd.read_sql_query(
+                "SELECT * FROM predictions WHERE date = ? ORDER BY final_confidence DESC",
+                conn, params=(today,)
+            )
+            conn.close()
+            return df
+    except Exception as e:
+        st.error(f"Error loading signals: {e}")
         return pd.DataFrame()
 
 
