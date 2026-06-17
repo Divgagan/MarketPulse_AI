@@ -40,5 +40,8 @@ jobs:
         NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+        SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
+        RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
       run: |
         python -m pipeline.eod_pipeline
