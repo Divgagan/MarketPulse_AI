@@ -1,0 +1,43 @@
+name: MarketPulse AI Pipeline
+
+on:
+  schedule:
+    # India market hours in UTC: 3:45 AM to 10:30 AM UTC (= 9:15 AM to 4 PM IST)
+    # Run at minutes 0 and 30 of each hour, hours 3-10 UTC, Monday to Friday
+    - cron: '0,30 3-10 * * 1-5'
+    
+    # EOD Pipeline (ML + Agents): 3:45 PM IST = 10:15 AM UTC
+    - cron: '15 10 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        python -m spacy download en_core_web_sm
+
+    - name: Run EOD Pipeline
+      # Only run the full pipeline at EOD (10:15 AM UTC) or manual trigger
+      if: github.event_name == 'workflow_dispatch' || (github.event.schedule == '15 10 * * 1-5')
+      env:
+        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      run: |
+        python pipeline/eod_pipeline.py
