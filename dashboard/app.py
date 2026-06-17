@@ -59,7 +59,7 @@ def load_today_signals() -> pd.DataFrame:
             conn.close()
             return df
     except Exception as e:
-        st.error(f"Error loading signals: {e}")
+        st.error(f"Error loading signals: {e}. (Debug - URL: {'Found' if SUPABASE_URL else 'Missing'}, KEY: {'Found' if SUPABASE_KEY else 'Missing'})")
         return pd.DataFrame()
 
 
