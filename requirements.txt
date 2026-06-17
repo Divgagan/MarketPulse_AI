@@ -1,65 +1,9 @@
-# MarketPulse AI — Python Dependencies
-# Install with: pip install -r requirements.txt
-# Environment: conda agentic_env
+# MarketPulse AI — Streamlit Dashboard Dependencies
+# Used by Streamlit Community Cloud (Lightweight)
 
-# ── Agent Orchestration ──────────────────────────────────────────
-langgraph
-langchain
-langchain-groq
-langchain-google-genai
-langchain-community
-langsmith
-groq
-google-generativeai
-
-# ── News Fetching ─────────────────────────────────────────────────
-feedparser
-newsapi-python
-
-# ── NLP & Sentiment ───────────────────────────────────────────────
-spacy
-transformers
-torch
-sentence-transformers
-
-# ── Vector Database (RAG Memory) ──────────────────────────────────
-chromadb
-
-# ── Market Data ───────────────────────────────────────────────────
-yfinance
-nsepy
-
-# ── Technical Indicators ──────────────────────────────────────────
-pandas-ta
-
-# ── ML Libraries ──────────────────────────────────────────────────
-lightgbm
-hmmlearn
-shap
-optuna
-
-# ── Backtesting ───────────────────────────────────────────────────
-vectorbt
-
-# ── Time Series Forecasting ───────────────────────────────────────
-chronos-forecasting
-
-# ── Dashboard & Visualization ─────────────────────────────────────
 streamlit
+pandas
 plotly
-
-# ── Scheduling ────────────────────────────────────────────────────
-apscheduler
-
-# ── Database & Storage ────────────────────────────────────────────
-sqlalchemy
 supabase
-
-# ── Utilities ─────────────────────────────────────────────────────
 python-dotenv
 requests
-beautifulsoup4
-scipy
-scikit-learn
-numpy
-pandas
