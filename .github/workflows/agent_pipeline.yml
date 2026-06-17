@@ -34,10 +34,11 @@ jobs:
       # Only run the full pipeline at EOD (10:15 AM UTC) or manual trigger
       if: github.event_name == 'workflow_dispatch' || (github.event.schedule == '15 10 * * 1-5')
       env:
+        PYTHONPATH: "."
         GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       run: |
-        python pipeline/eod_pipeline.py
+        python -m pipeline.eod_pipeline
