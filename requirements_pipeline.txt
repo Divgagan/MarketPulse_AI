@@ -42,7 +42,7 @@ optuna
 vectorbt
 
 # ── Time Series Forecasting ───────────────────────────────────────
-chronos-forecasting
+git+https://github.com/amazon-science/chronos-forecasting.git
 
 # ── Dashboard & Visualization ─────────────────────────────────────
 streamlit
