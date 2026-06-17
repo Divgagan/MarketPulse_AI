@@ -7,3 +7,7 @@ plotly
 supabase
 python-dotenv
 requests
+pytz
+joblib
+scikit-learn
+lightgbm
