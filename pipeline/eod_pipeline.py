@@ -215,6 +215,14 @@ def run_eod_pipeline() -> dict:
     logger.info(f"=== EOD Pipeline Started: {start_time.isoformat()} ===")
     logger.info("=" * 60)
 
+    from config.settings import SUPABASE_URL, SUPABASE_KEY
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        logger.error("=" * 60)
+        logger.error("CRITICAL WARNING: SUPABASE CREDENTIALS MISSING IN ENVIRONMENT!")
+        logger.error("The pipeline will run and send emails, but data WILL NOT be saved to the cloud.")
+        logger.error("Please add SUPABASE_URL and SUPABASE_KEY to GitHub Repository Secrets.")
+        logger.error("=" * 60)
+
     try:
         _step1_update_price_data()
         _step2_engineer_features()
