@@ -90,30 +90,58 @@ def _init_db() -> None:
 
 
 def _save_signal_to_db(signal: FinalSignal) -> None:
-    """Persist a FinalSignal to SQLite for dashboard and validation."""
+    """
+    Persist a FinalSignal to SQLite AND Supabase.
+
+    SQLite  : local fallback (for dev / dashboard on same machine).
+    Supabase: cloud persistence — REQUIRED for GitHub Actions runs,
+              since the runner's local filesystem is wiped after each run.
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    row = {
+        "date":                today,
+        "ticker":              signal["ticker"],
+        "predicted_direction": signal["final_direction"],
+        "final_confidence":    signal["final_confidence"],
+        "signal_strength":     signal["signal_strength"],
+        "alert_text":          signal["alert_text"],
+        "created_at":          signal["generated_at"],
+    }
+
+    # ── Write to local SQLite ─────────────────────────────────────────────────
     _init_db()
-    conn = sqlite3.connect(str(PREDICTIONS_DB))
     try:
+        conn = sqlite3.connect(str(PREDICTIONS_DB))
         conn.execute(
             """INSERT INTO predictions
                (date, ticker, predicted_direction, final_confidence,
                 signal_strength, alert_text, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
-                datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                signal["ticker"],
-                signal["final_direction"],
-                signal["final_confidence"],
-                signal["signal_strength"],
-                signal["alert_text"],
-                signal["generated_at"],
+                row["date"], row["ticker"], row["predicted_direction"],
+                row["final_confidence"], row["signal_strength"],
+                row["alert_text"], row["created_at"],
             ),
         )
         conn.commit()
-    except Exception as e:
-        logger.debug(f"DB save failed for {signal['ticker']}: {e}")
-    finally:
         conn.close()
+    except Exception as e:
+        logger.debug(f"SQLite save failed for {signal['ticker']}: {e}")
+
+    # ── Write to Supabase (cloud persistence for GitHub Actions) ──────────────
+    try:
+        from config.settings import SUPABASE_URL, SUPABASE_KEY
+        if SUPABASE_URL and SUPABASE_KEY:
+            from supabase import create_client
+            sb = create_client(SUPABASE_URL, SUPABASE_KEY)
+            # upsert on (date, ticker) — prevents duplicate rows if pipeline re-runs
+            sb.table("predictions").upsert(
+                row,
+                on_conflict="date,ticker",
+            ).execute()
+            logger.debug(f"Supabase upsert OK: {signal['ticker']} {today}")
+    except Exception as e:
+        logger.warning(f"Supabase save failed for {signal['ticker']}: {e}")
 
 
 # ── Core Aggregation Function ─────────────────────────────────────────────────
@@ -210,12 +238,11 @@ def aggregate_stock_signals(
     final_conf = max(0.0, min(1.0, final_conf))
 
     # ── Step 3: Signal strength ───────────────────────────────────────────────
+    # Thresholds: weak < CONFIDENCE_THRESHOLD(0.55) ≤ moderate < 0.7 ≤ strong
     if final_conf < CONFIDENCE_THRESHOLD:
         strength = "weak"
-    elif final_conf < 0.45:
+    elif final_conf < 0.70:
         strength = "moderate"
-    elif final_conf < 0.6:
-        strength = "strong"
     else:
         strength = "strong"
 

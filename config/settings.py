@@ -111,7 +111,7 @@ def validate_config() -> dict:
         "NEWSAPI_KEY (optional)": bool(NEWSAPI_KEY and NEWSAPI_KEY != "your_newsapi_key_here"),
         "LANGSMITH_API_KEY (optional)": bool(LANGSMITH_API_KEY and LANGSMITH_API_KEY != "your_langsmith_api_key_here"),
         "SUPABASE_URL": bool(SUPABASE_URL and "supabase.co" in SUPABASE_URL),
-        "SUPABASE_KEY": bool(SUPABASE_KEY and SUPABASE_KEY.startswith("sb_")),
+        "SUPABASE_KEY": bool(SUPABASE_KEY and len(SUPABASE_KEY) > 20),  # JWT token (eyJ...)
         "DATA_DIR exists": DATA_DIR.exists(),
         "MODELS_DIR exists": MODELS_DIR.exists(),
         "CHROMA_DIR exists": CHROMA_DIR.exists(),
