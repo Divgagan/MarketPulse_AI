@@ -27,6 +27,10 @@ def send_email_alert(df_predictions: pd.DataFrame = None):
     sender_password = get_secret("SENDER_PASSWORD")
     receiver_email  = get_secret("RECEIVER_EMAIL")
 
+    if sender_email: sender_email = sender_email.strip()
+    if sender_password: sender_password = sender_password.strip()
+    if receiver_email: receiver_email = receiver_email.strip()
+
     if not sender_email or not sender_password or not receiver_email:
         logger.warning("Email credentials missing (SENDER_EMAIL / SENDER_PASSWORD / RECEIVER_EMAIL). Skipping email alert.")
         return
