@@ -20,11 +20,11 @@ def get_secret(key: str) -> str:
     """Try to get a secret from os.environ first, then Streamlit secrets."""
     val = os.getenv(key)
     if val:
-        return val
+        return val.strip()
     try:
         import streamlit as st
         if key in st.secrets:
-            return st.secrets[key]
+            return str(st.secrets[key]).strip()
     except Exception:
         pass
     return None
