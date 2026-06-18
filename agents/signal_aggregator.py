@@ -134,12 +134,14 @@ def _save_signal_to_db(signal: FinalSignal) -> None:
         if SUPABASE_URL and SUPABASE_KEY:
             from supabase import create_client
             sb = create_client(SUPABASE_URL, SUPABASE_KEY)
-            # upsert on (date, ticker) — prevents duplicate rows if pipeline re-runs
-            sb.table("predictions").upsert(
-                row,
-                on_conflict="date,ticker",
-            ).execute()
-            logger.debug(f"Supabase upsert OK: {signal['ticker']} {today}")
+            
+            # Delete any existing row for this ticker today (prevents duplicates)
+            sb.table("predictions").delete().eq("date", today).eq("ticker", signal["ticker"]).execute()
+            
+            # Insert the new fresh row
+            sb.table("predictions").insert(row).execute()
+            
+            logger.debug(f"Supabase save OK: {signal['ticker']} {today}")
     except Exception as e:
         logger.warning(f"Supabase save failed for {signal['ticker']}: {e}")
 
