@@ -116,7 +116,6 @@ def send_email_alert(df_predictions: pd.DataFrame = None):
     </html>
     """
 
-    n_strong = len(strong_signals)
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"📈 MarketPulse AI: {n_strong} Strong Signal{'s' if n_strong != 1 else ''} — {today_str}"
     msg["From"]    = f"MarketPulse AI <{sender_email}>"
