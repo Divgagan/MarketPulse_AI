@@ -302,14 +302,6 @@ def market_monitor_node(state: MarketPulseState) -> MarketPulseState:
     warnings = list(state.get("warnings", []))
     errors   = list(state.get("errors", []))
 
-    # ── Step 1: Validate yesterday's predictions ──────────────────────────────
-    try:
-        validate_previous_predictions({})  # will fetch prices internally
-    except Exception as e:
-        msg = f"Agent5: Validation failed (non-fatal) — {e}"
-        logger.warning(msg)
-        warnings.append(msg)
-
     # ── Step 2: Fetch current prices ──────────────────────────────────────────
     try:
         current_prices = fetch_current_prices()
@@ -318,6 +310,15 @@ def market_monitor_node(state: MarketPulseState) -> MarketPulseState:
         logger.error(msg)
         errors.append(msg)
         current_prices = {}
+
+    # ── Step 1: Validate yesterday's predictions (needs today's prices) ───────
+    # NOTE: Must run AFTER fetch_current_prices so actual price data flows in
+    try:
+        validate_previous_predictions(current_prices)
+    except Exception as e:
+        msg = f"Agent5: Validation failed (non-fatal) — {e}"
+        logger.warning(msg)
+        warnings.append(msg)
 
     # ── Step 3: Calculate daily % changes ────────────────────────────────────
     try:

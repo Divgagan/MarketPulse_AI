@@ -199,7 +199,7 @@ st.subheader("🖥 System Health")
 
 h1, h2, h3, h4 = st.columns(4)
 
-# Last run time
+# Last run time — guard against empty df (max() returns NaT, strftime crashes)
 last_run = df["date"].max().strftime("%Y-%m-%d") if not df.empty else "Never"
 h1.metric("Last Pipeline Run", last_run)
 

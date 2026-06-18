@@ -210,7 +210,7 @@ with st.spinner(f"Firing up the time machine for {selected_date_str}..."):
             "Ticker": ticker,
             "Predicted": pred_dir,
             "Confidence": float(row["final_confidence"]),
-            "Strength": row["signal_strength"].upper(),
+            "Strength": str(row["signal_strength"]).upper(),  # normalize to uppercase
             "Actual Change": actual_pct,
             "Actual Dir": actual_dir,
             "Correct": is_correct
@@ -249,7 +249,7 @@ def highlight_correct(val):
     return ''
 
 st.dataframe(
-    display_df.style.applymap(highlight_correct, subset=['Correct']),
+    display_df.style.map(highlight_correct, subset=['Correct']),
     use_container_width=True,
     height=500
 )

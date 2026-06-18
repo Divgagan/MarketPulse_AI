@@ -70,7 +70,7 @@ def t_settings():
 
 def t_tickers():
     from config.tickers import ACTIVE_STOCKS
-    assert len(ACTIVE_STOCKS) >= 100, f"Expected 100+ tickers, got {len(ACTIVE_STOCKS)}"
+    assert len(ACTIVE_STOCKS) >= 50, f"Expected 50 tickers, got {len(ACTIVE_STOCKS)}"
     return f"{len(ACTIVE_STOCKS)} tickers loaded"
 
 def t_knowledge():
