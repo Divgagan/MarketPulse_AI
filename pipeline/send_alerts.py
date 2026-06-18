@@ -54,14 +54,13 @@ def send_email_alert(df_predictions: pd.DataFrame = None):
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     if not df_predictions.empty and "signal_strength" in df_predictions.columns:
-        strong_signals = df_predictions[
-            df_predictions["signal_strength"] == "strong"
-        ].copy()
-        strong_signals = strong_signals.sort_values(
+        top_signals = df_predictions.sort_values(
             by="final_confidence", ascending=False
-        )
+        ).head(10).copy()
+        n_strong = len(df_predictions[df_predictions["signal_strength"] == "strong"])
     else:
-        strong_signals = pd.DataFrame()
+        top_signals = pd.DataFrame()
+        n_strong = 0
 
     # ── Build HTML email body ─────────────────────────────────────────────────
     html_content = f"""
@@ -71,11 +70,11 @@ def send_email_alert(df_predictions: pd.DataFrame = None):
         <div style="max-width:620px;margin:auto;background:#fff;border-radius:10px;padding:24px;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
         <h2 style="color: #00D4AA; margin-top:0;">📈 MarketPulse AI — Daily Intelligence Report</h2>
         <p><b>Date:</b> {today_str} &nbsp;|&nbsp; <b>Signals source:</b> EOD Pipeline (3:45 PM IST)</p>
-        <p>The AI pipeline has finished running for the day. Here are the strongest quantitative signals:</p>
+        <p>The AI pipeline has finished running for the day. Here are the top 10 highest-confidence signals:</p>
     """
 
-    if strong_signals.empty:
-        html_content += "<p><i>⚠ No 'strong' confidence signals detected today. The market may be highly uncertain.</i></p>"
+    if top_signals.empty:
+        html_content += "<p><i>⚠ No signals generated today. The market may be highly uncertain.</i></p>"
     else:
         html_content += """
         <table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;max-width:580px;font-size:14px;">
@@ -86,7 +85,7 @@ def send_email_alert(df_predictions: pd.DataFrame = None):
                 <th>Strength</th>
             </tr>
         """
-        for _, row in strong_signals.iterrows():
+        for _, row in top_signals.iterrows():
             ticker    = row.get("ticker", "—")
             direction = row.get("predicted_direction", "—")
             conf_val  = row.get("final_confidence", 0)
@@ -98,7 +97,7 @@ def send_email_alert(df_predictions: pd.DataFrame = None):
             html_content += f"""
             <tr>
                 <td><b>{ticker}</b></td>
-                <td style="color:{color};font-weight:bold;">{icon} {direction}</td>
+                <td style="color:{color};font-weight:bold;">{icon} {direction.title()}</td>
                 <td>{confidence}</td>
                 <td>{strength.title() if strength else '—'}</td>
             </tr>
