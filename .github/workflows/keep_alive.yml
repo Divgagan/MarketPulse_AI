@@ -1,0 +1,30 @@
+name: Keep Streamlit App Awake
+
+on:
+  schedule:
+    # Ping every day at 6:00 AM UTC (11:30 AM IST) to prevent hibernation
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - name: Ping Streamlit App
+      env:
+        APP_URL: ${{ secrets.STREAMLIT_APP_URL }}
+      run: |
+        if [ -z "$APP_URL" ]; then
+          echo "STREAMLIT_APP_URL secret not set — skipping ping."
+          exit 0
+        fi
+        echo "Pinging $APP_URL ..."
+        STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$APP_URL" || true)
+        echo "HTTP Status: $STATUS"
+        if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 400 ]; then
+          echo "✅ App is alive (HTTP $STATUS)"
+        else
+          echo "⚠️ App returned HTTP $STATUS — it may still be waking up. This is normal."
+        fi

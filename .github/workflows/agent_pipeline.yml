@@ -2,24 +2,35 @@ name: MarketPulse AI Pipeline
 
 on:
   schedule:
-    # India market hours in UTC: 3:45 AM to 10:30 AM UTC (= 9:15 AM to 4 PM IST)
-    # Run at minutes 0 and 30 of each hour, hours 3-10 UTC, Monday to Friday
-    - cron: '0,30 3-10 * * 1-5'
-    
-    # EOD Pipeline (ML + Agents): 3:45 PM IST = 10:15 AM UTC
+    # EOD Pipeline (ML + Agents): 3:45 PM IST = 10:15 AM UTC, Mon-Fri
     - cron: '15 10 * * 1-5'
+
+    # Monthly Retraining: 1st of every month at 2:30 PM UTC (= 8 PM IST)
+    - cron: '30 14 1 * *'
+
   workflow_dispatch:
+    inputs:
+      run_type:
+        description: 'What to run'
+        required: false
+        default: 'eod'
+        type: choice
+        options:
+          - eod
+          - retrain
+          - both
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 55
+
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python 3.12
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: "3.12"
         cache: 'pip'
@@ -30,9 +41,11 @@ jobs:
         pip install -r requirements_pipeline.txt
         python -m spacy download en_core_web_sm
 
-    - name: Run EOD Pipeline
-      # Only run the full pipeline at EOD (10:15 AM UTC) or manual trigger
-      if: github.event_name == 'workflow_dispatch' || (github.event.schedule == '15 10 * * 1-5')
+    # ── EOD Pipeline: runs daily at 3:45 PM IST (Mon-Fri) ──────────────────
+    - name: Run EOD Pipeline (ML + Agents → Predictions)
+      if: |
+        github.event_name == 'workflow_dispatch' && (github.event.inputs.run_type == 'eod' || github.event.inputs.run_type == 'both') ||
+        github.event.schedule == '15 10 * * 1-5'
       env:
         PYTHONPATH: "."
         GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -44,4 +57,26 @@ jobs:
         SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
         RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
       run: |
+        echo "=== Starting EOD Pipeline at $(date -u) ==="
         python -m pipeline.eod_pipeline
+        echo "=== EOD Pipeline Finished at $(date -u) ==="
+
+    # ── Monthly Retraining: 1st of every month at 8 PM IST ─────────────────
+    - name: Run Monthly Model Retraining
+      if: |
+        github.event_name == 'workflow_dispatch' && (github.event.inputs.run_type == 'retrain' || github.event.inputs.run_type == 'both') ||
+        github.event.schedule == '30 14 1 * *'
+      env:
+        PYTHONPATH: "."
+        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      run: |
+        echo "=== Starting Monthly Retraining at $(date -u) ==="
+        python -c "
+        from pipeline.eod_pipeline import run_monthly_retrain
+        run_monthly_retrain()
+        print('Monthly retraining complete.')
+        "
+        echo "=== Monthly Retraining Finished at $(date -u) ==="
