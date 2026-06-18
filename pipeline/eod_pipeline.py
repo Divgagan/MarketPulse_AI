@@ -26,6 +26,7 @@ from typing import Optional
 
 from config.tickers import ACTIVE_STOCKS
 from config.settings import DATA_DIR, MODELS_DIR, PROCESSED_DIR, RAW_DIR
+from pipeline.send_alerts import send_email_alert
 
 # ── Logger ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -230,6 +231,30 @@ def run_eod_pipeline() -> dict:
             f"=== EOD Pipeline Complete: {n_final} signals in {elapsed}s ==="
         )
         logger.info("=" * 60)
+
+        # ── Step 8: Send email alert ─────────────────────────────────────────
+        try:
+            import pandas as pd
+            signals = result.get("final_signals", [])
+            if signals:
+                df_signals = pd.DataFrame([
+                    {
+                        "ticker":               s.get("ticker"),
+                        "predicted_direction":  s.get("final_direction"),
+                        "final_confidence":     s.get("final_confidence"),
+                        "signal_strength":      s.get("signal_strength"),
+                        "alert_text":           s.get("alert_text", ""),
+                    }
+                    for s in signals
+                ])
+                logger.info("Step 8: Sending email alert...")
+                send_email_alert(df_signals)
+            else:
+                logger.info("Step 8: No signals to email — sending empty report...")
+                send_email_alert(None)
+        except Exception as e:
+            logger.error(f"Step 8 (email) FAILED: {e}")
+
         return result
 
     except Exception as e:
