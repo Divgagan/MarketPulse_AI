@@ -158,6 +158,10 @@ with st.expander("⚠️ **RESEARCH DISCLAIMER — Read Before Using**", expande
 
 st.markdown("---")
 
+from config.settings import SUPABASE_URL, SUPABASE_KEY
+if not SUPABASE_URL or not SUPABASE_KEY:
+    st.error("🚨 **Configuration Error:** Supabase credentials are missing! Please check Streamlit Secrets for syntax errors (like accidental line breaks). The dashboard is currently reading an empty local database.")
+
 # ── Load data ─────────────────────────────────────────────────────────────────
 with st.spinner("Loading today's signals..."):
     df = load_today_signals()
