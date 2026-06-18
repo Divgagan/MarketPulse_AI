@@ -320,7 +320,7 @@ if __name__ == "__main__":
             all_ok = False
 
     if all_ok:
-        logger.info("All imports OK — EOD pipeline ready to run.")
+        logger.info("All imports OK — Starting EOD pipeline execution...")
+        run_eod_pipeline()
     else:
-        logger.warning("Some imports failed — check dependencies above.")
-    logger.info("To run: python -m pipeline.eod_pipeline  (or use scheduler)")
+        logger.warning("Some imports failed — check dependencies above before running.")
