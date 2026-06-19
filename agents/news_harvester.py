@@ -94,20 +94,26 @@ def init_db() -> None:
     """
     Create the SQLite articles deduplication table if it doesn't exist.
     Called once at startup — safe to call multiple times.
+    Also purges articles older than 7 days so same URLs can be re-fetched daily.
     """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
     try:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS articles (
-                id         TEXT PRIMARY KEY,
+                id         TEXT NOT NULL,
                 url        TEXT NOT NULL,
                 title      TEXT,
                 source     TEXT,
-                fetched_at TEXT NOT NULL
+                fetched_at TEXT NOT NULL,
+                fetch_date TEXT NOT NULL DEFAULT (date('now')),
+                PRIMARY KEY (id, fetch_date)
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_fetched ON articles (fetched_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fetch_date ON articles (fetch_date)")
+        # Purge records older than 7 days so the same URLs can be re-fetched on new days
+        conn.execute("DELETE FROM articles WHERE fetch_date < date('now', '-7 days')")
         conn.commit()
     finally:
         conn.close()
@@ -115,17 +121,23 @@ def init_db() -> None:
 
 def is_duplicate(article_id: str) -> bool:
     """
-    Check if an article ID (MD5 of URL) already exists in the database.
+    Check if an article ID (MD5 of URL) was already seen TODAY.
+    Same article can be fetched again on a different day — so dedup
+    is scoped to today's date only, not all-time.
 
     Args:
         article_id: MD5 hex string of the article URL
 
     Returns:
-        True if already seen, False if new
+        True if already seen today, False if new
     """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     conn = sqlite3.connect(str(DB_PATH))
     try:
-        cursor = conn.execute("SELECT 1 FROM articles WHERE id = ?", (article_id,))
+        cursor = conn.execute(
+            "SELECT 1 FROM articles WHERE id = ? AND fetch_date = ?",
+            (article_id, today)
+        )
         return cursor.fetchone() is not None
     finally:
         conn.close()
@@ -134,6 +146,7 @@ def is_duplicate(article_id: str) -> bool:
 def mark_fetched(article_id: str, url: str, title: str, source: str) -> None:
     """
     Insert article into deduplication DB after fetching.
+    Uses (id, fetch_date) as primary key so same URL is allowed on different days.
 
     Args:
         article_id : MD5 hash of URL
@@ -141,11 +154,14 @@ def mark_fetched(article_id: str, url: str, title: str, source: str) -> None:
         title      : Article headline
         source     : Feed source name
     """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    today   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     conn = sqlite3.connect(str(DB_PATH))
     try:
         conn.execute(
-            "INSERT OR IGNORE INTO articles (id, url, title, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
-            (article_id, url, title, source, datetime.now(timezone.utc).isoformat()),
+            "INSERT OR IGNORE INTO articles (id, url, title, source, fetched_at, fetch_date) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (article_id, url, title, source, now_iso, today),
         )
         conn.commit()
     finally:

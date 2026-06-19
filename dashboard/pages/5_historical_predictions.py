@@ -125,7 +125,10 @@ def compute_retroactive_predictions(target_date_str):
 
 def get_actual_outcome(ticker, pred_date_str):
     """Fetches the actual % return for the next available trading day after pred_date_str."""
-    csv_path = PROCESSED_DIR / f"{ticker}.csv"
+    # Try features CSV first (actual stored file), fallback to plain CSV
+    csv_path = PROCESSED_DIR / f"{ticker}_features.csv"
+    if not csv_path.exists():
+        csv_path = PROCESSED_DIR / f"{ticker}.csv"
     if not csv_path.exists():
         return None, None
     
@@ -134,7 +137,10 @@ def get_actual_outcome(ticker, pred_date_str):
         df.index = pd.to_datetime(df.index).normalize()
         
         target_date = pd.Timestamp(pred_date_str)
-        close_col = "Close" if "Close" in df.columns else "close"
+        # Find Close column (case-insensitive)
+        close_col = next((c for c in df.columns if c.lower() == "close"), None)
+        if close_col is None:
+            return None, None
         
         before_or_on = df[df.index <= target_date]
         if before_or_on.empty:

@@ -35,8 +35,15 @@ import os
 from datetime import datetime, timezone
 
 # ── LangSmith tracing setup (Blueprint requirement) ───────────────────────────
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_PROJECT"]    = "marketpulse-ai"
+# Reads LANGCHAIN_TRACING_V2 from .env — set to "false" to disable LangSmith
+# Set to "true" and provide a valid LANGSMITH_API_KEY to enable tracing
+import os
+_tracing = os.environ.get("LANGCHAIN_TRACING_V2", "false").lower()
+if _tracing not in ("true", "1"):
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
+    os.environ["LANGCHAIN_PROJECT"]    = "marketpulse-ai"
+else:
+    os.environ["LANGCHAIN_PROJECT"] = "marketpulse-ai"
 
 from langgraph.graph import END, StateGraph
 

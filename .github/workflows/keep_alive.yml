@@ -2,8 +2,8 @@ name: Keep Streamlit App Awake
 
 on:
   schedule:
-    # Ping every day at 6:00 AM UTC (11:30 AM IST) to prevent hibernation
-    - cron: '0 6 * * *'
+    # Ping every 30 minutes, 7 AM to 11 PM IST (1:30 AM - 5:30 PM UTC), all days
+    - cron: '*/30 1-17 * * *'
   workflow_dispatch:
 
 jobs:
