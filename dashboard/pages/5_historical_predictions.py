@@ -123,41 +123,48 @@ def compute_retroactive_predictions(target_date_str):
             
     return pd.DataFrame(predictions)
 
+@st.cache_data(ttl=3600)
 def get_actual_outcome(ticker, pred_date_str):
-    """Fetches the actual % return for the next available trading day after pred_date_str."""
-    # Try features CSV first (actual stored file), fallback to plain CSV
-    csv_path = PROCESSED_DIR / f"{ticker}_features.csv"
-    if not csv_path.exists():
-        csv_path = PROCESSED_DIR / f"{ticker}.csv"
-    if not csv_path.exists():
-        return None, None
-    
+    """
+    Fetches the actual % return for the next trading day after pred_date_str.
+    Uses yfinance directly so this works on Streamlit Cloud (no local CSV needed).
+    Results cached for 1 hour.
+    """
     try:
-        df = pd.read_csv(csv_path, index_col="Date", parse_dates=True)
+        import yfinance as yf
+        from datetime import timedelta
+
+        pred_date  = pd.Timestamp(pred_date_str)
+        # Fetch a window: pred_date to pred_date + 5 days (covers next trading day)
+        start      = pred_date.strftime("%Y-%m-%d")
+        end        = (pred_date + timedelta(days=7)).strftime("%Y-%m-%d")
+
+        df = yf.download(ticker, start=start, end=end,
+                         progress=False, auto_adjust=True)
+        if df.empty or len(df) < 2:
+            return None, None
+
         df.index = pd.to_datetime(df.index).normalize()
-        
-        target_date = pd.Timestamp(pred_date_str)
-        # Find Close column (case-insensitive)
-        close_col = next((c for c in df.columns if c.lower() == "close"), None)
-        if close_col is None:
+
+        # Base close: on the prediction date (or last available before it)
+        on_or_before = df[df.index <= pred_date]
+        if on_or_before.empty:
             return None, None
-        
-        before_or_on = df[df.index <= target_date]
-        if before_or_on.empty:
-            return None, None
-        base_close = float(before_or_on[close_col].iloc[-1])
-        
-        # Get close on the FIRST trading day AFTER the prediction day
-        after = df[df.index > target_date]
+        base_close = float(on_or_before["Close"].iloc[-1])
+
+        # Next close: first trading day AFTER prediction date
+        after = df[df.index > pred_date]
         if after.empty:
             return None, None
-        next_close = float(after[close_col].iloc[0])
-        
+        next_close = float(after["Close"].iloc[0])
+
         pct_change = ((next_close - base_close) / base_close) * 100
         actual_dir = "UP" if pct_change > 0 else "DOWN"
-        return actual_dir, pct_change
+        return actual_dir, round(pct_change, 2)
+
     except Exception:
         return None, None
+
 
 
 # ── 2. UI: Calendar Input ────────────────────────────────────────────────────
@@ -187,42 +194,97 @@ with st.spinner(f"Firing up the time machine for {selected_date_str}..."):
         st.stop()
         
     st.info(source_msg)
-        
-    results = []
-    correct_count = 0
-    wrong_count = 0
-    verifiable_count = 0
-    
-    for _, row in df_preds.iterrows():
-        ticker = row["ticker"]
-        pred_dir = row["predicted_direction"].upper()
-        
-        # If computed on-the-fly, actual data date might be different than selected_date (e.g. weekend)
-        data_date_used = row.get("_data_date_used", selected_date_str)
-        
-        actual_dir, actual_pct = get_actual_outcome(ticker, data_date_used)
-        
-        is_correct = None
-        if actual_dir:
-            verifiable_count += 1
-            if (pred_dir == "BULLISH" and actual_dir == "UP") or (pred_dir == "BEARISH" and actual_dir == "DOWN"):
-                is_correct = True
-                correct_count += 1
-            else:
-                is_correct = False
-                wrong_count += 1
-                
-        results.append({
-            "Ticker": ticker,
-            "Predicted": pred_dir,
-            "Confidence": float(row["final_confidence"]),
-            "Strength": str(row["signal_strength"]).upper(),  # normalize to uppercase
-            "Actual Change": actual_pct,
-            "Actual Dir": actual_dir,
-            "Correct": is_correct
-        })
-        
-    df_results = pd.DataFrame(results).sort_values(by="Confidence", ascending=False)
+
+# ── Batch fetch actual prices via yfinance (one call for all tickers) ─────────
+@st.cache_data(ttl=3600)
+def fetch_batch_outcomes(tickers_tuple, pred_date_str):
+    """
+    Downloads price data for ALL tickers in one yfinance call.
+    Returns dict: {ticker: (actual_dir, pct_change)} or {ticker: (None, None)}
+    """
+    import yfinance as yf
+    from datetime import timedelta
+
+    pred_date = pd.Timestamp(pred_date_str)
+    start     = pred_date.strftime("%Y-%m-%d")
+    end       = (pred_date + timedelta(days=7)).strftime("%Y-%m-%d")
+
+    outcomes = {}
+    try:
+        # Download all tickers at once — much faster than one-by-one
+        raw = yf.download(
+            list(tickers_tuple), start=start, end=end,
+            progress=False, auto_adjust=True, group_by="ticker"
+        )
+        for ticker in tickers_tuple:
+            try:
+                if len(tickers_tuple) == 1:
+                    df = raw
+                else:
+                    df = raw[ticker] if ticker in raw.columns.get_level_values(0) else pd.DataFrame()
+
+                if df.empty or "Close" not in df.columns:
+                    outcomes[ticker] = (None, None)
+                    continue
+
+                df.index = pd.to_datetime(df.index).normalize()
+                on_or_before = df[df.index <= pred_date]
+                after        = df[df.index  > pred_date]
+
+                if on_or_before.empty or after.empty:
+                    outcomes[ticker] = (None, None)
+                    continue
+
+                base_close = float(on_or_before["Close"].iloc[-1])
+                next_close = float(after["Close"].iloc[0])
+                pct        = ((next_close - base_close) / base_close) * 100
+                outcomes[ticker] = ("UP" if pct > 0 else "DOWN", round(pct, 2))
+            except Exception:
+                outcomes[ticker] = (None, None)
+    except Exception:
+        # Fallback: return all None
+        for ticker in tickers_tuple:
+            outcomes[ticker] = (None, None)
+    return outcomes
+
+with st.spinner("Fetching actual market outcomes (live from Yahoo Finance)..."):
+    all_tickers = tuple(df_preds["ticker"].tolist())
+    outcomes_map = fetch_batch_outcomes(all_tickers, selected_date_str)
+
+results = []
+correct_count = 0
+wrong_count = 0
+verifiable_count = 0
+
+for _, row in df_preds.iterrows():
+    ticker   = row["ticker"]
+    pred_dir = row["predicted_direction"].upper()
+
+    actual_dir, actual_pct = outcomes_map.get(ticker, (None, None))
+
+    is_correct = None
+    if actual_dir:
+        verifiable_count += 1
+        if (pred_dir == "BULLISH" and actual_dir == "UP") or (pred_dir == "BEARISH" and actual_dir == "DOWN"):
+            is_correct = True
+            correct_count += 1
+        else:
+            is_correct = False
+            wrong_count += 1
+
+    results.append({
+        "Ticker":        ticker,
+        "Predicted":     pred_dir,
+        "Confidence":    float(row["final_confidence"]),
+        "Strength":      str(row["signal_strength"]).upper(),
+        "Actual Change": actual_pct,
+        "Actual Dir":    actual_dir,
+        "Correct":       is_correct
+    })
+
+df_results = pd.DataFrame(results).sort_values(by="Confidence", ascending=False)
+
+
 
 # ── 4. Dashboard View ────────────────────────────────────────────────────────
 
