@@ -43,7 +43,7 @@ from typing import List
 import feedparser
 
 from agents.state import MarketPulseState, NewsArticle
-from config.settings import NEWSAPI_KEY, DATA_DIR
+from config.settings import NEWSAPI_KEY, DATA_DIR, SUPABASE_URL, SUPABASE_KEY
 
 # ── Logger ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -344,6 +344,45 @@ def fetch_newsapi_articles() -> List[NewsArticle]:
     return articles
 
 
+# ── Supabase Sync ──────────────────────────────────────────────────────────────
+
+def _sync_articles_to_supabase(articles: List[NewsArticle]) -> None:
+    """
+    Upload today's fetched articles to Supabase so the Streamlit Cloud
+    dashboard can display them. Silently skips if credentials are missing.
+
+    Args:
+        articles: List of new NewsArticle dicts fetched this run
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        logger.debug("Supabase credentials not set — skipping article cloud sync")
+        return
+
+    try:
+        from supabase import create_client
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        payload = [
+            {
+                "id":         a["id"],
+                "url":        a["url"],
+                "title":      a.get("title", ""),
+                "source":     a.get("source", ""),
+                "fetched_at": a.get("fetched_at", datetime.now(timezone.utc).isoformat()),
+                "fetch_date": today,
+            }
+            for a in articles
+        ]
+
+        # Upsert — safe to call multiple times (no duplicates)
+        supabase.table("articles").upsert(payload, on_conflict="id,fetch_date").execute()
+        logger.info(f"  Cloud sync: {len(payload)} articles saved to Supabase")
+
+    except Exception as e:
+        logger.warning(f"  Supabase article sync failed (non-fatal): {e}")
+
+
 # ── LangGraph Node Function ────────────────────────────────────────────────────
 
 def news_harvester_node(state: MarketPulseState) -> MarketPulseState:
@@ -399,6 +438,10 @@ def news_harvester_node(state: MarketPulseState) -> MarketPulseState:
         f"Agent 1 complete: {len(unique_articles)} new articles "
         f"from {n_sources} sources"
     )
+
+    # ── Sync to Supabase so Streamlit Cloud dashboard can show articles ───────
+    if unique_articles:
+        _sync_articles_to_supabase(unique_articles)
 
     return {
         **state,

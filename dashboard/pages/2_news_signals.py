@@ -49,18 +49,34 @@ st.caption("All news articles processed through the 4-stage AI filter pipeline t
 
 @st.cache_data(ttl=300)
 def load_articles() -> pd.DataFrame:
-    """Load today's fetched articles from SQLite."""
+    """Load today's fetched articles from Supabase (cloud) or SQLite (local fallback)."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        from config.settings import SUPABASE_URL, SUPABASE_KEY
+        if SUPABASE_URL and SUPABASE_KEY:
+            from supabase import create_client
+            supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+            res = supabase.table("articles").select("*") \
+                          .eq("fetch_date", today) \
+                          .order("fetched_at", desc=True).execute()
+            if res.data:
+                return pd.DataFrame(res.data)
+            # If no data in Supabase, fall through to SQLite
+    except Exception as e:
+        st.caption(f"Cloud load skipped: {e}")
+
+    # Local SQLite fallback
     try:
         conn = sqlite3.connect(ARTICLES_DB)
         df   = pd.read_sql_query(
-            "SELECT * FROM articles WHERE fetched_at LIKE ? ORDER BY fetched_at DESC",
-            conn, params=(f"{today}%",)
+            "SELECT * FROM articles WHERE fetch_date = ? ORDER BY fetched_at DESC",
+            conn, params=(today,)
         )
         conn.close()
         return df
     except Exception:
         return pd.DataFrame()
+
 
 
 # ── Summary ────────────────────────────────────────────────────────────────────
