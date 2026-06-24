@@ -47,7 +47,7 @@ st.title("📰 News Signal Intelligence")
 st.caption("All news articles processed through the 4-stage AI filter pipeline today.")
 
 
-@st.cache_data(ttl=300)
+
 def load_articles() -> pd.DataFrame:
     """Load today's fetched articles from Supabase (cloud) or SQLite (local fallback)."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")

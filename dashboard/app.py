@@ -39,9 +39,8 @@ IST = pytz.timezone("Asia/Kolkata")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=300)
 def load_today_signals() -> pd.DataFrame:
-    """Load today's predictions from Supabase or SQLite. Cache for 5 minutes."""
+    """Load today's predictions from Supabase or SQLite."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     try:
         from config.settings import SUPABASE_URL, SUPABASE_KEY

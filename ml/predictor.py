@@ -406,14 +406,16 @@ def train_all_models(optimize: bool = False) -> None:
     for idx, ticker in enumerate(ACTIVE_STOCKS.keys(), start=1):
         logger.info(f"\n[{idx:02d}/{total}] {ticker}")
 
-        csv_path = PROCESSED_DIR / f"{ticker}_features.csv"
-        if not csv_path.exists():
-            logger.warning(f"  {ticker}: Features CSV not found — skipping")
-            results.append({"ticker": ticker, "status": "SKIPPED — no CSV"})
+        parquet_path = PROCESSED_DIR / f"{ticker}_features.parquet"
+        if not parquet_path.exists():
+            logger.warning(f"  {ticker}: Features parquet not found — skipping")
+            results.append({"ticker": ticker, "status": "SKIPPED — no parquet"})
             continue
 
         try:
-            df = pd.read_csv(csv_path, index_col="Date", parse_dates=True)
+            df = pd.read_parquet(parquet_path)
+            if "Date" in df.columns:
+                df.set_index("Date", inplace=True)
             predictor = StockPredictor(ticker)
             result = predictor.train(df, optimize_hyperparams=optimize)
             result["status"] = "OK"
@@ -446,7 +448,7 @@ def train_all_models(optimize: bool = False) -> None:
 
 # ── Standalone: Predict All 50 Stocks (used by EOD pipeline) ─────────────────
 
-def predict_all_stocks() -> list:
+def predict_all_stocks(current_regime: str = "unknown") -> list:
     """
     Load each stock's trained predictor and run predict() on latest data.
     Used by the EOD pipeline (pipeline/eod_pipeline.py) every day at 3:45 PM IST.
@@ -459,20 +461,28 @@ def predict_all_stocks() -> list:
     predictions = []
 
     for ticker in ACTIVE_STOCKS.keys():
-        csv_path = PROCESSED_DIR / f"{ticker}_features.csv"
+        parquet_path = PROCESSED_DIR / f"{ticker}_features.parquet"
 
-        if not csv_path.exists():
-            logger.warning(f"  {ticker}: Features CSV not found — skipping")
+        if not parquet_path.exists():
+            logger.warning(f"  {ticker}: Features parquet not found — skipping")
             continue
 
         try:
-            df = pd.read_csv(csv_path, index_col="Date", parse_dates=True)
+            df = pd.read_parquet(parquet_path)
+            if "Date" in df.columns:
+                df.set_index("Date", inplace=True)
 
             if len(df) < 5:
                 logger.warning(f"  {ticker}: Too few rows ({len(df)}) — skipping")
                 continue
 
             predictor = StockPredictor(ticker)
+            
+            # Inject market regime code if missing
+            regime_map = {"bear": 0, "sideways": 1, "bull": 2, "unknown": 1}
+            if "market_regime" not in df.columns:
+                df["market_regime"] = regime_map.get(str(current_regime).lower(), 1)
+                
             pred = predictor.predict(df)
 
             # Only include signals above confidence threshold
