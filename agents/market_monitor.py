@@ -226,6 +226,20 @@ def validate_previous_predictions(current_prices: Dict[str, float]) -> None:
             finally:
                 conn.close()
 
+            # Sync update to Supabase Cloud
+            try:
+                from config.settings import SUPABASE_URL, SUPABASE_KEY
+                if SUPABASE_URL and SUPABASE_KEY:
+                    from supabase import create_client
+                    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+                    supabase.table("predictions").update({
+                        "actual_direction": actual_direction,
+                        "actual_change_pct": round(actual_change, 2),
+                        "was_correct": was_correct
+                    }).eq("date", yesterday).eq("ticker", ticker).execute()
+            except Exception as e:
+                logger.debug(f"Supabase accuracy update failed for {ticker}: {e}")
+
             # Update ChromaDB RAG memory
             if chroma_available:
                 try:
