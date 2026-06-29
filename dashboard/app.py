@@ -40,20 +40,29 @@ IST = pytz.timezone("Asia/Kolkata")
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def load_today_signals() -> pd.DataFrame:
-    """Load today's predictions from Supabase or SQLite."""
+    """Load latest predictions from Supabase or SQLite."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     try:
         from config.settings import SUPABASE_URL, SUPABASE_KEY
         if SUPABASE_URL and SUPABASE_KEY:
             from supabase import create_client
             supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-            res = supabase.table("predictions").select("*").eq("date", today).order("final_confidence", desc=True).execute()
+            
+            # Fetch the latest date available
+            date_res = supabase.table("predictions").select("date").order("date", desc=True).limit(1).execute()
+            latest_date = date_res.data[0]["date"] if date_res.data else today
+
+            res = supabase.table("predictions").select("*").eq("date", latest_date).order("final_confidence", desc=True).execute()
             return pd.DataFrame(res.data)
         else:
             conn = sqlite3.connect(PREDICTIONS_DB)
+            # Fetch the latest date available
+            date_df = pd.read_sql_query("SELECT MAX(date) as latest FROM predictions", conn)
+            latest_date = date_df.iloc[0]["latest"] if not date_df.empty and date_df.iloc[0]["latest"] else today
+
             df   = pd.read_sql_query(
                 "SELECT * FROM predictions WHERE date = ? ORDER BY final_confidence DESC",
-                conn, params=(today,)
+                conn, params=(latest_date,)
             )
             conn.close()
             return df

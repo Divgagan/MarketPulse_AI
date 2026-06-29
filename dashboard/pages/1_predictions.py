@@ -48,7 +48,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 Today's Predictions")
+st.title("📊 Latest Predictions")
 st.caption("All NIFTY 50 signals generated today, sorted by confidence.")
 
 
@@ -60,13 +60,23 @@ def load_signals() -> pd.DataFrame:
         if SUPABASE_URL and SUPABASE_KEY:
             from supabase import create_client
             supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-            res = supabase.table("predictions").select("*").eq("date", today).order("final_confidence", desc=True).execute()
+            
+            # Fetch the latest date available
+            date_res = supabase.table("predictions").select("date").order("date", desc=True).limit(1).execute()
+            latest_date = date_res.data[0]["date"] if date_res.data else today
+            
+            res = supabase.table("predictions").select("*").eq("date", latest_date).order("final_confidence", desc=True).execute()
             df = pd.DataFrame(res.data)
         else:
             conn = sqlite3.connect(PREDICTIONS_DB)
+            
+            # Fetch the latest date available
+            date_df = pd.read_sql_query("SELECT MAX(date) as latest FROM predictions", conn)
+            latest_date = date_df.iloc[0]["latest"] if not date_df.empty and date_df.iloc[0]["latest"] else today
+            
             df   = pd.read_sql_query(
                 "SELECT * FROM predictions WHERE date = ? ORDER BY final_confidence DESC",
-                conn, params=(today,)
+                conn, params=(latest_date,)
             )
             conn.close()
             

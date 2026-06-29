@@ -30,7 +30,7 @@ yfinance
 nsepy
 
 # ── Technical Indicators ──────────────────────────────────────────
-pandas-ta
+ta
 
 # ── ML Libraries ──────────────────────────────────────────────────
 lightgbm
