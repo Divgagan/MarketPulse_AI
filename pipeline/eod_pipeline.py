@@ -67,6 +67,62 @@ def _load_nifty_close():
     return None
 
 
+# ── Model Sync (Supabase) ─────────────────────────────────────────────────────
+
+def _sync_models_to_supabase() -> None:
+    """Zip the models directory and upload to Supabase 'models' bucket."""
+    from config.settings import SUPABASE_URL, SUPABASE_KEY, MODELS_DIR
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        logger.warning("Supabase credentials missing, skipping model upload.")
+        return
+
+    try:
+        import shutil
+        from supabase import create_client, Client
+
+        logger.info("Zipping models directory for Supabase upload...")
+        zip_path = str(MODELS_DIR) + "_archive"
+        shutil.make_archive(zip_path, 'zip', MODELS_DIR)
+
+        logger.info("Uploading models.zip to Supabase...")
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        with open(zip_path + ".zip", "rb") as f:
+            supabase.storage.from_("models").upload(
+                file=f,
+                path="models.zip",
+                file_options={"x-upsert": "true"}
+            )
+        logger.info("Models successfully uploaded to Supabase.")
+    except Exception as e:
+        logger.error(f"Failed to upload models to Supabase: {e}")
+
+def _sync_models_from_supabase() -> None:
+    """Download models.zip from Supabase 'models' bucket and extract."""
+    from config.settings import SUPABASE_URL, SUPABASE_KEY, MODELS_DIR
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        logger.warning("Supabase credentials missing, skipping model download.")
+        return
+
+    try:
+        import shutil
+        from supabase import create_client, Client
+
+        logger.info("Downloading models.zip from Supabase...")
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        
+        zip_bytes = supabase.storage.from_("models").download("models.zip")
+        
+        zip_path = str(MODELS_DIR) + "_archive.zip"
+        with open(zip_path, "wb+") as f:
+            f.write(zip_bytes)
+
+        logger.info("Extracting models...")
+        shutil.unpack_archive(zip_path, MODELS_DIR)
+        logger.info("Models successfully downloaded and extracted.")
+    except Exception as e:
+        logger.warning(f"Failed to download models from Supabase: {e}")
+
+
 # ── Step Functions ────────────────────────────────────────────────────────────
 
 def _step1_update_price_data() -> None:
@@ -226,6 +282,10 @@ def run_eod_pipeline() -> dict:
     try:
         _step1_update_price_data()
         _step2_engineer_features()
+        
+        # Download trained ML models from Supabase Cloud before running predictions
+        _sync_models_from_supabase()
+        
         current_regime = _step3_get_regime()
         lgbm_preds     = _step4_lgbm_predictions(current_regime)
         chronos_preds  = _step5_chronos_forecasts()
@@ -291,6 +351,9 @@ def run_monthly_retrain() -> None:
 
         logger.info("Retraining ensemble models (optimize=False for speed)...")
         train_all_models(optimize=False)
+
+        # Upload the freshly trained ML models to Supabase Cloud
+        _sync_models_to_supabase()
 
         logger.info("=== Monthly Retraining Complete ===")
 
