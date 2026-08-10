@@ -5,6 +5,9 @@ on:
     # EOD Pipeline (ML + Agents): 3:45 PM IST = 10:15 AM UTC, Mon-Fri
     - cron: '15 10 * * 1-5'
 
+    # News Pipeline: Every 30 mins between 6:30 AM and 6:00 PM IST (1:00 AM - 12:30 PM UTC, Mon-Fri)
+    - cron: '*/30 1-12 * * 1-5'
+
     # Monthly Retraining: 1st of every month at 2:30 PM UTC (= 8 PM IST)
     - cron: '30 14 1 * *'
 
@@ -17,6 +20,7 @@ on:
         type: choice
         options:
           - eod
+          - news
           - retrain
           - both
 
@@ -60,6 +64,26 @@ jobs:
         echo "=== Starting EOD Pipeline at $(date -u) ==="
         python -m pipeline.eod_pipeline
         echo "=== EOD Pipeline Finished at $(date -u) ==="
+
+    # ── News Pipeline: every 30 mins (6:30 AM to 6:00 PM IST) ──────────────
+    - name: Run News Cycle Pipeline
+      if: |
+        github.event_name == 'workflow_dispatch' && (github.event.inputs.run_type == 'news' || github.event.inputs.run_type == 'both') ||
+        github.event.schedule == '*/30 1-12 * * 1-5'
+      env:
+        PYTHONPATH: "."
+        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+        SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
+        RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
+      run: |
+        echo "=== Starting News Cycle Pipeline at $(date -u) ==="
+        python -c "from agents.graph import run_pipeline; run_pipeline('news_cycle')"
+        echo "=== News Cycle Pipeline Finished at $(date -u) ==="
 
     # ── Monthly Retraining: 1st of every month at 8 PM IST ─────────────────
     - name: Run Monthly Model Retraining

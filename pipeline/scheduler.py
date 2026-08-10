@@ -83,11 +83,11 @@ def start_scheduler() -> BackgroundScheduler:
     """
     scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
 
-    # ── Job 1: News pipeline every 30 min, 9 AM–6 PM IST ─────────────────────
+    # ── Job 1: News pipeline every 30 min, 7 AM–6 PM IST ─────────────────────
     scheduler.add_job(
         func    = _run_news_cycle,
         trigger = "cron",
-        hour    = "9-18",
+        hour    = "7-18",
         minute  = "*/30",
         id      = "news_pipeline",
         name    = "News Cycle Pipeline",
