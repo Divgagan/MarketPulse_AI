@@ -85,8 +85,30 @@ jobs:
         python -c "from agents.graph import run_pipeline; run_pipeline('news_cycle')"
         echo "=== News Cycle Pipeline Finished at $(date -u) ==="
 
-    # ── Monthly Retraining: 1st of every month at 8 PM IST ─────────────────
-    - name: Run Monthly Model Retraining
+    # ── Monthly Retraining + Drift Check: 1st of every month at 8 PM IST ───
+    # Improvement #1 (MLflow) + #2 (Drift) + #4 (Optuna) all run here.
+    - name: Run Monthly Drift Check
+      if: |
+        github.event_name == 'workflow_dispatch' && (github.event.inputs.run_type == 'retrain' || github.event.inputs.run_type == 'both') ||
+        github.event.schedule == '30 14 1 * *'
+      env:
+        PYTHONPATH: "."
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      run: |
+        echo "=== Running Data Drift Check at $(date -u) ==="
+        python -c "
+        from ml.drift_monitor import run_weekly_drift_check
+        results = run_weekly_drift_check()
+        red = [t for t, r in results.items() if r.get('severity') == 'RED']
+        if red:
+            print(f'WARNING: HIGH DRIFT detected for: {red}')
+        else:
+            print('Drift check complete — no critical drift detected.')
+        "
+        echo "=== Drift Check Finished at $(date -u) ==="
+
+    - name: Run Monthly Model Retraining (Optuna + MLflow)
       if: |
         github.event_name == 'workflow_dispatch' && (github.event.inputs.run_type == 'retrain' || github.event.inputs.run_type == 'both') ||
         github.event.schedule == '30 14 1 * *'
@@ -97,10 +119,13 @@ jobs:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       run: |
-        echo "=== Starting Monthly Retraining at $(date -u) ==="
+        echo "=== Starting Monthly Retraining (Optuna + MLflow) at $(date -u) ==="
         python -c "
-        from pipeline.eod_pipeline import run_monthly_retrain
-        run_monthly_retrain()
-        print('Monthly retraining complete.')
+        from ml.model_trainer import train_all_stocks
+        # use_optuna=True: Optuna searches best params per stock (#4)
+        # MLflow automatically tracks every run (#1)
+        # Calibration (#3) and Meta-Learner (#5) applied inside train_final_models()
+        results = train_all_stocks(skip_existing=False, use_optuna=True)
+        print(f'Monthly retraining complete: {len(results)} stocks trained.')
         "
         echo "=== Monthly Retraining Finished at $(date -u) ==="

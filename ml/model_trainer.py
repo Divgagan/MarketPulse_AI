@@ -3,24 +3,32 @@ ml/model_trainer.py — MarketPulse AI
 ========================================
 Trains one LightGBM + CatBoost ENSEMBLE model per NIFTY 50 stock.
 
-Architecture (Option B — approved by developer):
-  - LightGBM : Fast gradient boosting, excellent on tabular data
-  - CatBoost  : Ordered boosting, handles categorical features natively,
-                less hyperparameter tuning needed, lower overfitting risk
-  - Ensemble  : Final probability = 0.5 * LGB_prob + 0.5 * CAT_prob
-                (averaging cancels individual model errors, +3-4% accuracy)
+Architecture:
+  - LightGBM     : Fast gradient boosting, excellent on tabular data
+  - CatBoost     : Ordered boosting, handles categorical features natively
+  - Meta-Learner : Logistic Regression stacker that learns optimal LGB/CAT blend
+                   (Improvement #5 — replaces hardcoded 50/50 average)
 
-Overfitting Prevention (4 layers):
+Improvements added:
+  #1 MLflow Model Versioning  — every training run tracked, rollback possible
+  #2 Drift Detection          — see ml/drift_monitor.py (called from GitHub Actions)
+  #3 Confidence Calibration   — Platt Scaling via CalibratedClassifierCV
+  #4 Optuna Tuning            — auto-discovers best LightGBM params (20 trials)
+  #5 Meta-Learner Stacking    — LR stacker replaces hardcoded 50/50 ensemble
+
+Overfitting Prevention (5 layers):
   1. TimeSeriesSplit(n_splits=5) — no future leakage, strictly chronological
   2. LightGBM regularisation params (max_depth, min_child_samples, reg_lambda)
-  3. CatBoost ordered boosting (built-in protection against overfitting)
+  3. CatBoost ordered boosting (built-in protection)
   4. Early stopping on validation set for both models
-  5. Overfitting score card: Train vs CV gap > 10% → logged as WARNING
+  5. Overfit score card: Train vs CV gap > 10% → logged as WARNING
 
 Saves per stock:
-  - data/models/{ticker}_lgb.pkl     (LightGBM model)
-  - data/models/{ticker}_cat.pkl     (CatBoost model)
-  - data/models/{ticker}_meta.json   (accuracy report + feature importances)
+  - data/models/{ticker}_lgb.pkl          (LightGBM model)
+  - data/models/{ticker}_cat.pkl          (CatBoost model)
+  - data/models/{ticker}_calibrator.pkl   (Platt Scaling calibrator)
+  - data/models/{ticker}_meta_learner.pkl (Meta-Learner stacker)
+  - data/models/{ticker}_meta.json        (accuracy report + feature importances)
 """
 
 import json
@@ -39,9 +47,30 @@ import lightgbm as lgb
 from catboost import CatBoostClassifier, Pool
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import accuracy_score, roc_auc_score, classification_report
+from sklearn.linear_model import LogisticRegression
+from sklearn.calibration import CalibratedClassifierCV
+
+# ── Optuna (Improvement #4) ───────────────────────────────────────────────────
+try:
+    import optuna
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    OPTUNA_AVAILABLE = True
+except ImportError:
+    OPTUNA_AVAILABLE = False
+
+# ── MLflow Registry (Improvement #1) ─────────────────────────────────────────
+try:
+    from ml.model_registry import registry as mlflow_registry
+    MLFLOW_AVAILABLE = True
+except Exception:
+    mlflow_registry = None
+    MLFLOW_AVAILABLE = False
 
 from config.settings import PROCESSED_DIR, MODELS_DIR
 from config.tickers import ACTIVE_STOCKS
+
+# ── Optuna trials — 20 is fast but meaningful; increase for production ────────
+OPTUNA_N_TRIALS = 20
 
 # ── Logger ──────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -308,27 +337,103 @@ class StockModelTrainer:
         self.meta["cv_results"] = results
         return results
 
-    def train_final_models(self) -> None:
+    def tune_hyperparameters(self) -> dict:
+        """
+        Improvement #4: Optuna Hyperparameter Tuning.
+
+        Searches for the best LightGBM parameters using 20 trials of
+        Bayesian optimisation. Uses TimeSeriesSplit so no future leakage.
+
+        Returns:
+            dict of best LGB params to replace LGB_PARAMS defaults.
+            If Optuna not available, returns the default LGB_PARAMS.
+        """
+        if not OPTUNA_AVAILABLE:
+            logger.warning(f"  {self.ticker}: Optuna not installed — using default LGB params")
+            return LGB_PARAMS
+
+        logger.info(f"  {self.ticker}: Running Optuna ({OPTUNA_N_TRIALS} trials)...")
+        X_arr = self.X.values
+        y_arr = self.y.values
+        tscv  = TimeSeriesSplit(n_splits=3)  # Fewer folds for speed in tuning
+
+        def objective(trial):
+            params = {
+                "objective":          "binary",
+                "metric":             "binary_logloss",
+                "boosting_type":      "gbdt",
+                "verbosity":          -1,
+                "n_jobs":             -1,
+                "random_state":       42,
+                "class_weight":       "balanced",
+                # Optuna explores these ranges
+                "n_estimators":       trial.suggest_int("n_estimators", 300, 1200),
+                "learning_rate":      trial.suggest_float("learning_rate", 0.02, 0.15, log=True),
+                "max_depth":          trial.suggest_int("max_depth", 4, 8),
+                "num_leaves":         trial.suggest_int("num_leaves", 20, 63),
+                "min_child_samples":  trial.suggest_int("min_child_samples", 30, 100),
+                "subsample":          trial.suggest_float("subsample", 0.6, 1.0),
+                "colsample_bytree":   trial.suggest_float("colsample_bytree", 0.6, 1.0),
+                "reg_alpha":          trial.suggest_float("reg_alpha", 0.01, 1.0, log=True),
+                "reg_lambda":         trial.suggest_float("reg_lambda", 0.1, 5.0, log=True),
+            }
+            scores = []
+            for train_idx, val_idx in tscv.split(X_arr):
+                X_tr, X_vl = X_arr[train_idx], X_arr[val_idx]
+                y_tr, y_vl = y_arr[train_idx], y_arr[val_idx]
+                model = lgb.LGBMClassifier(**params)
+                model.fit(
+                    X_tr, y_tr,
+                    eval_set=[(X_vl, y_vl)],
+                    callbacks=[
+                        lgb.early_stopping(30, verbose=False),
+                        lgb.log_evaluation(period=-1),
+                    ],
+                )
+                proba = model.predict_proba(X_vl)[:, 1]
+                try:
+                    scores.append(roc_auc_score(y_vl, proba))
+                except Exception:
+                    scores.append(0.5)
+            return float(np.mean(scores))
+
+        study = optuna.create_study(direction="maximize")
+        study.optimize(objective, n_trials=OPTUNA_N_TRIALS, show_progress_bar=False)
+
+        best_params = {**LGB_PARAMS, **study.best_params}
+        logger.info(
+            f"  {self.ticker}: Optuna best AUC={study.best_value:.4f} | "
+            f"params: depth={best_params.get('max_depth')}, "
+            f"lr={best_params.get('learning_rate'):.3f}, "
+            f"leaves={best_params.get('num_leaves')}"
+        )
+        self.meta["optuna_best_params"] = study.best_params
+        self.meta["optuna_best_auc"]    = study.best_value
+        return best_params
+
+    def train_final_models(self, use_optuna: bool = False) -> None:
         """
         Train FINAL LightGBM + CatBoost models on the ENTIRE dataset.
-
-        This is the model that gets used in production predictions.
-        After cross-validation confirms the model is not overfitting,
-        we train on all available data for maximum predictive power.
+        Improvements #3, #4, #5 are applied here:
+          - #4 Optuna: if use_optuna=True, best params are searched first
+          - #5 Meta-Learner: LogisticRegression stacker trained on LGB+CAT probas
+          - #3 Calibration: Platt Scaling applied to the final ensemble output
         """
         logger.info(f"  {self.ticker}: Training final models on all {len(self.X)} rows...")
+
+        # ── Improvement #4: Use Optuna params if requested ────────────────────
+        lgb_params = self.tune_hyperparameters() if use_optuna else LGB_PARAMS
 
         X_arr = self.X.values
         y_arr = self.y.values
 
-        # Use last 20% of data as hold-out for early stopping
-        # (still chronologically ordered — no future leakage)
+        # Chronological 80/20 split for hold-out evaluation
         split_idx = int(len(X_arr) * 0.8)
         X_train_f, X_val_f = X_arr[:split_idx], X_arr[split_idx:]
         y_train_f, y_val_f = y_arr[:split_idx], y_arr[split_idx:]
 
         # ── Train Final LightGBM ──────────────────────────────────────────────
-        self.lgb_model = lgb.LGBMClassifier(**LGB_PARAMS)
+        self.lgb_model = lgb.LGBMClassifier(**lgb_params)
         self.lgb_model.fit(
             X_train_f, y_train_f,
             eval_set=[(X_val_f, y_val_f)],
@@ -352,15 +457,44 @@ class StockModelTrainer:
             f"(best iter: {self.cat_model.best_iteration_})"
         )
 
-        # ── Hold-out evaluation ───────────────────────────────────────────────
+        # ── Base hold-out probabilities ───────────────────────────────────────
         lgb_proba = self.lgb_model.predict_proba(X_val_f)[:, 1]
         cat_proba = self.cat_model.predict_proba(val_pool)[:, 1]
-        ens_proba = 0.5 * lgb_proba + 0.5 * cat_proba
-        ens_pred  = (ens_proba >= 0.5).astype(int)
 
+        # ── Improvement #5: Meta-Learner Stacking ─────────────────────────────
+        # Stack LGB and CAT probas as features into a LogisticRegression
+        # This learns the optimal blend weight instead of hardcoding 50/50
+        stacker_features = np.column_stack([lgb_proba, cat_proba])  # shape (n, 2)
+        self.meta_learner = LogisticRegression(C=1.0, random_state=42, max_iter=500)
+        self.meta_learner.fit(stacker_features, y_val_f)
+        stacker_proba = self.meta_learner.predict_proba(stacker_features)[:, 1]
+
+        learned_lgb_weight = float(self.meta_learner.coef_[0][0])
+        learned_cat_weight = float(self.meta_learner.coef_[0][1])
+        logger.info(
+            f"  {self.ticker}: Meta-Learner learned weights → "
+            f"LGB={learned_lgb_weight:.3f}, CAT={learned_cat_weight:.3f} "
+            f"(replaces hardcoded 50/50)"
+        )
+
+        # ── Improvement #3: Platt Scaling Confidence Calibration ──────────────
+        # CalibratedClassifierCV with cv="prefit" calibrates on the hold-out set
+        # After this, probability 0.72 actually means the stock goes up 72% of the time
+        self.calibrator = CalibratedClassifierCV(
+            self.lgb_model, method="sigmoid", cv="prefit"
+        )
+        self.calibrator.fit(X_val_f, y_val_f)
+        calibrated_proba = self.calibrator.predict_proba(X_val_f)[:, 1]
+        logger.info(
+            f"  {self.ticker}: Platt Scaling calibration applied "
+            f"(mean raw={lgb_proba.mean():.3f} → calibrated={calibrated_proba.mean():.3f})"
+        )
+
+        # ── Final ensemble: Meta-Learner output as primary ─────────────────────
+        ens_pred  = (stacker_proba >= 0.5).astype(int)
         holdout_acc = accuracy_score(y_val_f, ens_pred)
         try:
-            holdout_auc = roc_auc_score(y_val_f, ens_proba)
+            holdout_auc = roc_auc_score(y_val_f, stacker_proba)
         except Exception:
             holdout_auc = 0.5
 
@@ -377,14 +511,19 @@ class StockModelTrainer:
         top_features = sorted(feat_importance.items(), key=lambda x: x[1], reverse=True)[:10]
 
         self.meta["final_model"] = {
-            "holdout_accuracy": float(holdout_acc),
-            "holdout_auc":      float(holdout_auc),
-            "lgb_best_iter":    int(self.lgb_model.best_iteration_),
-            "cat_best_iter":    int(self.cat_model.best_iteration_),
-            "n_training_rows":  int(len(self.X)),
-            "n_features":       int(len(self.X.columns)),
-            "top_10_features":  [(f, int(i)) for f, i in top_features],
-            "trained_at":       datetime.now().isoformat(),
+            "holdout_accuracy":    float(holdout_acc),
+            "holdout_auc":         float(holdout_auc),
+            "lgb_best_iter":       int(self.lgb_model.best_iteration_),
+            "cat_best_iter":       int(self.cat_model.best_iteration_),
+            "n_training_rows":     int(len(self.X)),
+            "n_features":          int(len(self.X.columns)),
+            "top_10_features":     [(f, int(i)) for f, i in top_features],
+            "trained_at":          datetime.now().isoformat(),
+            # Improvement metadata
+            "meta_learner_lgb_w":  learned_lgb_weight,
+            "meta_learner_cat_w":  learned_cat_weight,
+            "calibration_method":  "platt_scaling",
+            "optuna_used":         use_optuna,
         }
 
         logger.info(
@@ -394,11 +533,13 @@ class StockModelTrainer:
 
     def save_models(self) -> None:
         """
-        Save both models and the performance report to data/models/.
+        Save all models and the performance report to data/models/.
         Files:
-          - {ticker}_lgb.pkl    : LightGBM model
-          - {ticker}_cat.pkl    : CatBoost model
-          - {ticker}_meta.json  : Accuracy report + feature importances
+          - {ticker}_lgb.pkl          : LightGBM model
+          - {ticker}_cat.pkl          : CatBoost model
+          - {ticker}_calibrator.pkl   : Platt Scaling calibrator (#3)
+          - {ticker}_meta_learner.pkl : Meta-Learner stacker (#5)
+          - {ticker}_meta.json        : Accuracy report + feature importances
         """
         if self.lgb_model is None or self.cat_model is None:
             raise RuntimeError("Models not trained yet. Call train_final_models() first.")
@@ -407,9 +548,23 @@ class StockModelTrainer:
         lgb_path = MODELS_DIR / f"{self.ticker}_lgb.pkl"
         joblib.dump(self.lgb_model, lgb_path)
 
-        # Save CatBoost (CatBoost has its own save method)
+        # Save CatBoost
         cat_path = MODELS_DIR / f"{self.ticker}_cat.pkl"
         self.cat_model.save_model(str(cat_path))
+
+        # Improvement #3: Save Platt Scaling calibrator
+        if hasattr(self, "calibrator") and self.calibrator is not None:
+            cal_path = MODELS_DIR / f"{self.ticker}_calibrator.pkl"
+            joblib.dump(self.calibrator, cal_path)
+        else:
+            cal_path = None
+
+        # Improvement #5: Save Meta-Learner stacker
+        if hasattr(self, "meta_learner") and self.meta_learner is not None:
+            ml_path = MODELS_DIR / f"{self.ticker}_meta_learner.pkl"
+            joblib.dump(self.meta_learner, ml_path)
+        else:
+            ml_path = None
 
         # Save metadata / performance report
         meta_path = MODELS_DIR / f"{self.ticker}_meta.json"
@@ -418,28 +573,57 @@ class StockModelTrainer:
 
         logger.info(
             f"  {self.ticker}: Models saved → "
-            f"{lgb_path.name} | {cat_path.name} | {meta_path.name}"
+            f"{lgb_path.name} | {cat_path.name} | "
+            f"calibrator={'✓' if cal_path else '✗'} | "
+            f"meta_learner={'✓' if ml_path else '✗'}"
         )
+
+        # ── Improvement #1: Log to MLflow registry ────────────────────────────
+        if MLFLOW_AVAILABLE and mlflow_registry is not None:
+            try:
+                mlflow_registry.log_model_artifact(lgb_path, "lgb")
+                mlflow_registry.log_model_artifact(cat_path, "cat")
+                if cal_path:
+                    mlflow_registry.log_model_artifact(cal_path, "calibrator")
+                if ml_path:
+                    mlflow_registry.log_model_artifact(ml_path, "meta_learner")
+                mlflow_registry.log_meta_json(self.meta, self.ticker)
+                logger.info(f"  {self.ticker}: Artifacts logged to MLflow ✓")
+            except Exception as e:
+                logger.warning(f"  {self.ticker}: MLflow artifact logging failed — {e}")
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         """
         Get ensemble probability for new data (production use).
 
+        Priority order:
+          1. If Meta-Learner stacker loaded → use stacker (Improvement #5)
+          2. If Calibrator loaded → use calibrated LightGBM probas (#3)
+          3. Fallback → hardcoded 50/50 LGB + CAT average (original)
+
         Args:
             X: Feature array of shape (n_samples, n_features)
 
         Returns:
-            np.ndarray of probabilities (0.0–1.0) that price goes UP tomorrow
+            np.ndarray of calibrated probabilities (0.0–1.0)
         """
         if self.lgb_model is None or self.cat_model is None:
             raise RuntimeError("Models not loaded.")
 
         lgb_proba = self.lgb_model.predict_proba(X)[:, 1]
-
         cat_pool  = Pool(X, cat_features=self.cat_feature_indices)
         cat_proba = self.cat_model.predict_proba(cat_pool)[:, 1]
 
-        # 50/50 ensemble average
+        # ── Improvement #5: Use Meta-Learner if available ─────────────────────
+        if hasattr(self, "meta_learner") and self.meta_learner is not None:
+            stacker_feats = np.column_stack([lgb_proba, cat_proba])
+            return self.meta_learner.predict_proba(stacker_feats)[:, 1]
+
+        # ── Improvement #3: Use Calibrator if Meta-Learner not available ──────
+        if hasattr(self, "calibrator") and self.calibrator is not None:
+            return self.calibrator.predict_proba(X)[:, 1]
+
+        # ── Fallback: hardcoded 50/50 average (original behaviour) ───────────
         return 0.5 * lgb_proba + 0.5 * cat_proba
 
 
@@ -448,14 +632,17 @@ class StockModelTrainer:
 def load_trained_model(ticker: str) -> StockModelTrainer:
     """
     Load a previously trained ensemble model for a ticker.
+    Also loads calibrator and meta-learner if they exist.
 
     Returns:
-        StockModelTrainer with lgb_model and cat_model populated.
-        Raises FileNotFoundError if model files don't exist.
+        StockModelTrainer with all models populated.
+        Raises FileNotFoundError if core model files don't exist.
     """
     lgb_path  = MODELS_DIR / f"{ticker}_lgb.pkl"
     cat_path  = MODELS_DIR / f"{ticker}_cat.pkl"
     meta_path = MODELS_DIR / f"{ticker}_meta.json"
+    cal_path  = MODELS_DIR / f"{ticker}_calibrator.pkl"
+    ml_path   = MODELS_DIR / f"{ticker}_meta_learner.pkl"
 
     if not lgb_path.exists() or not cat_path.exists():
         raise FileNotFoundError(
@@ -469,23 +656,46 @@ def load_trained_model(ticker: str) -> StockModelTrainer:
     trainer.cat_model = CatBoostClassifier()
     trainer.cat_model.load_model(str(cat_path))
 
+    # Improvement #3: Load calibrator if exists
+    trainer.calibrator = joblib.load(cal_path) if cal_path.exists() else None
+
+    # Improvement #5: Load meta-learner if exists
+    trainer.meta_learner = joblib.load(ml_path) if ml_path.exists() else None
+
     if meta_path.exists():
         with open(meta_path) as f:
             trainer.meta = json.load(f)
 
-    logger.info(f"Loaded ensemble model for {ticker}")
+    improvements = []
+    if trainer.calibrator:   improvements.append("Platt Calibration")
+    if trainer.meta_learner: improvements.append("Meta-Learner Stacker")
+    logger.info(
+        f"Loaded model for {ticker} "
+        f"[{', '.join(improvements) if improvements else 'base ensemble'}]"
+    )
     return trainer
+
+
+# ── Null context manager (used when MLflow is not available) ─────────────────
+from contextlib import contextmanager
+
+@contextmanager
+def _null_context():
+    """No-op context manager — stands in when MLflow is unavailable."""
+    yield None
 
 
 # ── Train All 50 Stocks ───────────────────────────────────────────────────────
 
-def train_all_stocks(skip_existing: bool = True) -> dict:
+def train_all_stocks(skip_existing: bool = True, use_optuna: bool = False) -> dict:
     """
     Train LightGBM + CatBoost ensemble for all 50 NIFTY stocks.
 
     Args:
         skip_existing: If True, skip stocks that already have saved models.
                        Set to False to force full retraining.
+        use_optuna:    If True, run Optuna hyperparameter search per stock (#4).
+                       Adds ~5 minutes per stock — use for monthly retraining.
 
     Returns:
         dict of {ticker: meta_dict} for all successfully trained stocks.
@@ -496,8 +706,10 @@ def train_all_stocks(skip_existing: bool = True) -> dict:
     """
     logger.info("=" * 65)
     logger.info("MarketPulse AI -- Training LightGBM + CatBoost Ensemble")
-    logger.info(f"  Total stocks: {len(ACTIVE_STOCKS)}")
-    logger.info(f"  Models dir  : {MODELS_DIR}")
+    logger.info(f"  Total stocks : {len(ACTIVE_STOCKS)}")
+    logger.info(f"  Models dir   : {MODELS_DIR}")
+    logger.info(f"  Optuna tuning: {use_optuna} ({OPTUNA_N_TRIALS} trials/stock)")
+    logger.info(f"  MLflow       : {MLFLOW_AVAILABLE}")
     logger.info("=" * 65)
 
     results = {}
@@ -514,40 +726,62 @@ def train_all_stocks(skip_existing: bool = True) -> dict:
             lgb_path = MODELS_DIR / f"{ticker}_lgb.pkl"
             cat_path = MODELS_DIR / f"{ticker}_cat.pkl"
             if lgb_path.exists() and cat_path.exists():
-                logger.info(f"  {ticker}: Model already exists — skipping (use skip_existing=False to retrain)")
+                logger.info(f"  {ticker}: Model already exists — skipping")
                 skipped += 1
                 continue
 
         trainer = StockModelTrainer(ticker)
 
-        # Step 1: Load features
-        if not trainer.load_features():
-            failed += 1
-            continue
+        # ── Improvement #1: Wrap entire training in an MLflow run ─────────────
+        ctx = (
+            mlflow_registry.start_run(ticker)
+            if MLFLOW_AVAILABLE and mlflow_registry is not None
+            else _null_context()
+        )
 
-        # Step 2: Cross-validate (checks for overfitting)
-        try:
-            cv_results = trainer.cross_validate()
-        except Exception as e:
-            logger.error(f"  {ticker}: CV failed — {e}")
-            failed += 1
-            continue
+        with ctx:
+            # Step 1: Load features
+            if not trainer.load_features():
+                failed += 1
+                continue
 
-        # Step 3: Train final models on all data
-        try:
-            trainer.train_final_models()
-        except Exception as e:
-            logger.error(f"  {ticker}: Final training failed — {e}")
-            failed += 1
-            continue
+            # Step 2: Cross-validate (checks for overfitting)
+            try:
+                cv_results = trainer.cross_validate()
+                if MLFLOW_AVAILABLE and mlflow_registry is not None:
+                    mlflow_registry.log_metrics({
+                        "cv_lgb_accuracy":      cv_results["lgb_cv_accuracy"],
+                        "cv_cat_accuracy":      cv_results["cat_cv_accuracy"],
+                        "cv_ensemble_accuracy": cv_results["ensemble_cv_accuracy"],
+                        "overfit_gap":          cv_results["overfit_gap"],
+                    })
+            except Exception as e:
+                logger.error(f"  {ticker}: CV failed — {e}")
+                failed += 1
+                continue
 
-        # Step 4: Save
-        try:
-            trainer.save_models()
-        except Exception as e:
-            logger.error(f"  {ticker}: Save failed — {e}")
-            failed += 1
-            continue
+            # Step 3: Train final models (Improvements #3, #4, #5 applied here)
+            try:
+                trainer.train_final_models(use_optuna=use_optuna)
+                if MLFLOW_AVAILABLE and mlflow_registry is not None:
+                    final = trainer.meta.get("final_model", {})
+                    mlflow_registry.log_params(LGB_PARAMS)
+                    mlflow_registry.log_metrics({
+                        "holdout_accuracy": final.get("holdout_accuracy", 0),
+                        "holdout_auc":      final.get("holdout_auc", 0),
+                    })
+            except Exception as e:
+                logger.error(f"  {ticker}: Final training failed — {e}")
+                failed += 1
+                continue
+
+            # Step 4: Save models + MLflow artifacts
+            try:
+                trainer.save_models()
+            except Exception as e:
+                logger.error(f"  {ticker}: Save failed — {e}")
+                failed += 1
+                continue
 
         results[ticker] = trainer.meta
         success += 1

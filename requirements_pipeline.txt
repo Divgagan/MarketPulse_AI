@@ -37,6 +37,10 @@ lightgbm
 hmmlearn
 shap
 optuna
+# Improvement #1: MLflow model versioning + experiment tracking
+mlflow
+# Improvement #2: Evidently AI data drift detection
+evidently
 
 # ── Backtesting ───────────────────────────────────────────────────
 vectorbt
