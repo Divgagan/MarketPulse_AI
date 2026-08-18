@@ -2,9 +2,9 @@ name: MarketPulse AI Pipeline
 
 on:
   schedule:
-    # ML Pipeline (Pre-Market): 6:30 AM IST = 1:00 AM UTC, Mon-Fri
-    # Runs BEFORE market opens (9:15 AM IST) so predictions are ready for traders.
-    - cron: '0 1 * * 1-5'
+    # ML Pipeline: 8:15 AM IST = 2:45 AM UTC, Mon-Fri
+    # Runs exactly 1 hour before market opens at 9:15 AM IST.
+    - cron: '45 2 * * 1-5'
 
     # News Pipeline: Every 30 mins from 6:30 AM to 6:00 PM IST
     # = 1:00 AM to 12:30 PM UTC, Mon-Fri
@@ -48,11 +48,12 @@ jobs:
         pip install -r requirements_pipeline.txt
         python -m spacy download en_core_web_sm
 
-    # ── ML Pipeline: runs daily at 6:30 AM IST (1:00 AM UTC), Mon-Fri ────────
-    - name: Run ML Pipeline (Pre-Market Predictions)
+    # ── ML Pipeline: 8:15 AM IST = 2:45 AM UTC, Mon-Fri ───────────────────
+    # Runs exactly 1 hour before market opens (9:15 AM IST).
+    - name: Run ML Pipeline (1hr Pre-Market Predictions)
       if: |
         github.event_name == 'workflow_dispatch' && (github.event.inputs.run_type == 'eod' || github.event.inputs.run_type == 'both') ||
-        github.event.schedule == '0 1 * * 1-5'
+        github.event.schedule == '45 2 * * 1-5'
       env:
         PYTHONPATH: "."
         GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
