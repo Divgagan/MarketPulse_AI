@@ -7,9 +7,14 @@ Runs MarketPulse AI on a schedule during development (on your laptop).
 For production, GitHub Actions replaces this scheduler.
 
 Schedule:
-  - News pipeline:    Every 30 minutes, 9 AM–6 PM IST
-  - EOD pipeline:     Daily at 3:45 PM IST (after market close)
-  - Monthly retrain:  1st of every month at 8 PM IST
+  - ML Pipeline (EOD): Daily at 6:30 AM IST (pre-market, before market opens at 9:15 AM)
+  - News pipeline:     Every 30 minutes, 6:30 AM – 6:00 PM IST (full trading day coverage)
+  - Monthly retrain:   1st of every month at 8 PM IST
+
+Design Decision:
+  The ML pipeline runs at 6:30 AM so predictions are ready BEFORE the market opens at 9:15 AM.
+  News agents run every 30 min from 6:30 AM onwards to catch pre-market news,
+  intraday developments, and post-market announcements.
 
 Usage:
   python -m pipeline.scheduler         ← runs indefinitely until Ctrl+C
@@ -83,25 +88,29 @@ def start_scheduler() -> BackgroundScheduler:
     """
     scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
 
-    # ── Job 1: News pipeline every 30 min, 7 AM–6 PM IST ─────────────────────
+    # ── Job 1: News pipeline every 30 min, 6:30 AM – 6:00 PM IST ──────────────
+    # Starts at 6:30 AM to catch pre-market news before 9:15 AM market open.
+    # Runs every 30 min continuously through market hours and post-market.
     scheduler.add_job(
         func    = _run_news_cycle,
         trigger = "cron",
-        hour    = "7-18",
+        hour    = "6-18",
         minute  = "*/30",
         id      = "news_pipeline",
         name    = "News Cycle Pipeline",
         misfire_grace_time = 300,  # 5 min grace if job was missed
     )
 
-    # ── Job 2: EOD pipeline at 3:45 PM IST daily ─────────────────────────────
+    # ── Job 2: ML Pipeline at 6:30 AM IST daily (pre-market) ────────────────
+    # Runs BEFORE market opens (9:15 AM) so predictions are ready for traders.
+    # Collects latest data, runs HMM + LightGBM + Chronos, generates signals.
     scheduler.add_job(
         func    = _run_eod,
         trigger = "cron",
-        hour    = 15,
-        minute  = 45,
+        hour    = 6,
+        minute  = 30,
         id      = "eod_pipeline",
-        name    = "EOD Full Pipeline",
+        name    = "ML Pipeline (Pre-Market)",
         misfire_grace_time = 600,  # 10 min grace
     )
 
@@ -119,14 +128,14 @@ def start_scheduler() -> BackgroundScheduler:
 
     scheduler.start()
 
-    logger.info("=" * 55)
-    logger.info("MarketPulse AI Scheduler Started (Asia/Kolkata)")
-    logger.info("=" * 55)
-    logger.info("  Job 1 — News pipeline  : Every 30 min, 9 AM–6 PM IST")
-    logger.info("  Job 2 — EOD pipeline   : Daily 3:45 PM IST")
-    logger.info("  Job 3 — Monthly retrain: 1st of month, 8 PM IST")
+    logger.info("=" * 60)
+    logger.info("MarketPulse AI Scheduler Started (Asia/Kolkata / IST)")
+    logger.info("=" * 60)
+    logger.info("  Job 1 — News pipeline  : Every 30 min, 6:30 AM – 6:00 PM IST")
+    logger.info("  Job 2 — ML Pipeline    : Daily at 6:30 AM IST (pre-market)")
+    logger.info("  Job 3 — Monthly retrain: 1st of month, 8:00 PM IST")
     logger.info("Press Ctrl+C to stop.")
-    logger.info("=" * 55)
+    logger.info("=" * 60)
 
     return scheduler
 
