@@ -47,7 +47,6 @@ import lightgbm as lgb
 from catboost import CatBoostClassifier, Pool
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import accuracy_score, roc_auc_score, classification_report
-from sklearn.linear_model import LogisticRegression
 from sklearn.calibration import CalibratedClassifierCV
 
 # ── Optuna (Improvement #4) ───────────────────────────────────────────────────
@@ -457,26 +456,6 @@ class StockModelTrainer:
             f"(best iter: {self.cat_model.best_iteration_})"
         )
 
-        # ── Base hold-out probabilities ───────────────────────────────────────
-        lgb_proba = self.lgb_model.predict_proba(X_val_f)[:, 1]
-        cat_proba = self.cat_model.predict_proba(val_pool)[:, 1]
-
-        # ── Improvement #5: Meta-Learner Stacking ─────────────────────────────
-        # Stack LGB and CAT probas as features into a LogisticRegression
-        # This learns the optimal blend weight instead of hardcoding 50/50
-        stacker_features = np.column_stack([lgb_proba, cat_proba])  # shape (n, 2)
-        self.meta_learner = LogisticRegression(C=1.0, random_state=42, max_iter=500)
-        self.meta_learner.fit(stacker_features, y_val_f)
-        stacker_proba = self.meta_learner.predict_proba(stacker_features)[:, 1]
-
-        learned_lgb_weight = float(self.meta_learner.coef_[0][0])
-        learned_cat_weight = float(self.meta_learner.coef_[0][1])
-        logger.info(
-            f"  {self.ticker}: Meta-Learner learned weights → "
-            f"LGB={learned_lgb_weight:.3f}, CAT={learned_cat_weight:.3f} "
-            f"(replaces hardcoded 50/50)"
-        )
-
         # ── Improvement #3: Platt Scaling Confidence Calibration ──────────────
         # CalibratedClassifierCV with cv="prefit" calibrates on the hold-out set
         # After this, probability 0.72 actually means the stock goes up 72% of the time
@@ -490,11 +469,12 @@ class StockModelTrainer:
             f"(mean raw={lgb_proba.mean():.3f} → calibrated={calibrated_proba.mean():.3f})"
         )
 
-        # ── Final ensemble: Meta-Learner output as primary ─────────────────────
-        ens_pred  = (stacker_proba >= 0.5).astype(int)
+        # ── Final ensemble: simple 50/50 average (stable, interpretable) ─────────
+        ens_proba = 0.5 * lgb_proba + 0.5 * cat_proba
+        ens_pred  = (ens_proba >= 0.5).astype(int)
         holdout_acc = accuracy_score(y_val_f, ens_pred)
         try:
-            holdout_auc = roc_auc_score(y_val_f, stacker_proba)
+            holdout_auc = roc_auc_score(y_val_f, ens_proba)
         except Exception:
             holdout_auc = 0.5
 
@@ -511,19 +491,17 @@ class StockModelTrainer:
         top_features = sorted(feat_importance.items(), key=lambda x: x[1], reverse=True)[:10]
 
         self.meta["final_model"] = {
-            "holdout_accuracy":    float(holdout_acc),
-            "holdout_auc":         float(holdout_auc),
-            "lgb_best_iter":       int(self.lgb_model.best_iteration_),
-            "cat_best_iter":       int(self.cat_model.best_iteration_),
-            "n_training_rows":     int(len(self.X)),
-            "n_features":          int(len(self.X.columns)),
-            "top_10_features":     [(f, int(i)) for f, i in top_features],
-            "trained_at":          datetime.now().isoformat(),
-            # Improvement metadata
-            "meta_learner_lgb_w":  learned_lgb_weight,
-            "meta_learner_cat_w":  learned_cat_weight,
-            "calibration_method":  "platt_scaling",
-            "optuna_used":         use_optuna,
+            "holdout_accuracy":  float(holdout_acc),
+            "holdout_auc":       float(holdout_auc),
+            "lgb_best_iter":     int(self.lgb_model.best_iteration_),
+            "cat_best_iter":     int(self.cat_model.best_iteration_),
+            "n_training_rows":   int(len(self.X)),
+            "n_features":        int(len(self.X.columns)),
+            "top_10_features":   [(f, int(i)) for f, i in top_features],
+            "trained_at":        datetime.now().isoformat(),
+            "ensemble_method":   "50_50_average",
+            "calibration_method": "platt_scaling",
+            "optuna_used":       use_optuna,
         }
 
         logger.info(
@@ -533,13 +511,12 @@ class StockModelTrainer:
 
     def save_models(self) -> None:
         """
-        Save all models and the performance report to data/models/.
+        Save models and performance report to data/models/.
         Files:
-          - {ticker}_lgb.pkl          : LightGBM model
-          - {ticker}_cat.pkl          : CatBoost model
-          - {ticker}_calibrator.pkl   : Platt Scaling calibrator (#3)
-          - {ticker}_meta_learner.pkl : Meta-Learner stacker (#5)
-          - {ticker}_meta.json        : Accuracy report + feature importances
+          - {ticker}_lgb.pkl        : LightGBM model
+          - {ticker}_cat.pkl        : CatBoost model
+          - {ticker}_calibrator.pkl : Platt Scaling calibrator (#3)
+          - {ticker}_meta.json      : Accuracy report + feature importances
         """
         if self.lgb_model is None or self.cat_model is None:
             raise RuntimeError("Models not trained yet. Call train_final_models() first.")
@@ -559,13 +536,6 @@ class StockModelTrainer:
         else:
             cal_path = None
 
-        # Improvement #5: Save Meta-Learner stacker
-        if hasattr(self, "meta_learner") and self.meta_learner is not None:
-            ml_path = MODELS_DIR / f"{self.ticker}_meta_learner.pkl"
-            joblib.dump(self.meta_learner, ml_path)
-        else:
-            ml_path = None
-
         # Save metadata / performance report
         meta_path = MODELS_DIR / f"{self.ticker}_meta.json"
         with open(meta_path, "w") as f:
@@ -574,8 +544,7 @@ class StockModelTrainer:
         logger.info(
             f"  {self.ticker}: Models saved → "
             f"{lgb_path.name} | {cat_path.name} | "
-            f"calibrator={'✓' if cal_path else '✗'} | "
-            f"meta_learner={'✓' if ml_path else '✗'}"
+            f"calibrator={'✓' if cal_path else '✗'}"
         )
 
         # ── Improvement #1: Log to MLflow registry ────────────────────────────
@@ -585,8 +554,6 @@ class StockModelTrainer:
                 mlflow_registry.log_model_artifact(cat_path, "cat")
                 if cal_path:
                     mlflow_registry.log_model_artifact(cal_path, "calibrator")
-                if ml_path:
-                    mlflow_registry.log_model_artifact(ml_path, "meta_learner")
                 mlflow_registry.log_meta_json(self.meta, self.ticker)
                 logger.info(f"  {self.ticker}: Artifacts logged to MLflow ✓")
             except Exception as e:
@@ -596,34 +563,29 @@ class StockModelTrainer:
         """
         Get ensemble probability for new data (production use).
 
-        Priority order:
-          1. If Meta-Learner stacker loaded → use stacker (Improvement #5)
-          2. If Calibrator loaded → use calibrated LightGBM probas (#3)
-          3. Fallback → hardcoded 50/50 LGB + CAT average (original)
+        Ensemble strategy: 50/50 average of LGB + CAT probabilities.
+        If Platt calibrator is loaded, calibrated LGB proba is used
+        in place of raw LGB proba for better probability estimates.
 
         Args:
             X: Feature array of shape (n_samples, n_features)
 
         Returns:
-            np.ndarray of calibrated probabilities (0.0–1.0)
+            np.ndarray of ensemble probabilities (0.0–1.0)
         """
         if self.lgb_model is None or self.cat_model is None:
             raise RuntimeError("Models not loaded.")
 
-        lgb_proba = self.lgb_model.predict_proba(X)[:, 1]
         cat_pool  = Pool(X, cat_features=self.cat_feature_indices)
         cat_proba = self.cat_model.predict_proba(cat_pool)[:, 1]
 
-        # ── Improvement #5: Use Meta-Learner if available ─────────────────────
-        if hasattr(self, "meta_learner") and self.meta_learner is not None:
-            stacker_feats = np.column_stack([lgb_proba, cat_proba])
-            return self.meta_learner.predict_proba(stacker_feats)[:, 1]
-
-        # ── Improvement #3: Use Calibrator if Meta-Learner not available ──────
+        # Improvement #3: Use calibrated LGB proba if available
         if hasattr(self, "calibrator") and self.calibrator is not None:
-            return self.calibrator.predict_proba(X)[:, 1]
+            lgb_proba = self.calibrator.predict_proba(X)[:, 1]
+        else:
+            lgb_proba = self.lgb_model.predict_proba(X)[:, 1]
 
-        # ── Fallback: hardcoded 50/50 average (original behaviour) ───────────
+        # 50/50 ensemble average — stable and interpretable
         return 0.5 * lgb_proba + 0.5 * cat_proba
 
 
@@ -632,17 +594,16 @@ class StockModelTrainer:
 def load_trained_model(ticker: str) -> StockModelTrainer:
     """
     Load a previously trained ensemble model for a ticker.
-    Also loads calibrator and meta-learner if they exist.
+    Also loads Platt calibrator if it exists.
 
     Returns:
-        StockModelTrainer with all models populated.
+        StockModelTrainer with lgb_model, cat_model populated.
         Raises FileNotFoundError if core model files don't exist.
     """
     lgb_path  = MODELS_DIR / f"{ticker}_lgb.pkl"
     cat_path  = MODELS_DIR / f"{ticker}_cat.pkl"
     meta_path = MODELS_DIR / f"{ticker}_meta.json"
     cal_path  = MODELS_DIR / f"{ticker}_calibrator.pkl"
-    ml_path   = MODELS_DIR / f"{ticker}_meta_learner.pkl"
 
     if not lgb_path.exists() or not cat_path.exists():
         raise FileNotFoundError(
@@ -656,23 +617,15 @@ def load_trained_model(ticker: str) -> StockModelTrainer:
     trainer.cat_model = CatBoostClassifier()
     trainer.cat_model.load_model(str(cat_path))
 
-    # Improvement #3: Load calibrator if exists
+    # Improvement #3: Load Platt calibrator if exists
     trainer.calibrator = joblib.load(cal_path) if cal_path.exists() else None
-
-    # Improvement #5: Load meta-learner if exists
-    trainer.meta_learner = joblib.load(ml_path) if ml_path.exists() else None
 
     if meta_path.exists():
         with open(meta_path) as f:
             trainer.meta = json.load(f)
 
-    improvements = []
-    if trainer.calibrator:   improvements.append("Platt Calibration")
-    if trainer.meta_learner: improvements.append("Meta-Learner Stacker")
-    logger.info(
-        f"Loaded model for {ticker} "
-        f"[{', '.join(improvements) if improvements else 'base ensemble'}]"
-    )
+    cal_status = "+ Platt Calibration" if trainer.calibrator else "base ensemble"
+    logger.info(f"Loaded model for {ticker} [{cal_status}]")
     return trainer
 
 
