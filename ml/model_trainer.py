@@ -79,43 +79,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger("model_trainer")
 
-# ── Feature columns used for ML ───────────────────────────────────────────────
-# These are exactly the columns produced by feature_engineering.py
-# Categorical features are handled natively by CatBoost (no one-hot needed)
+# ── Feature columns used for ML (16 Validated Features post Round 2 audit) ──────
+# Reduced from 42 to 16 based on 25-stock 3-method selection audits (RFECV + Permutation + Ablation).
 FEATURE_COLUMNS = [
-    # Price features
-    "daily_return", "weekly_return", "monthly_return", "log_return",
-    # Technical indicators
-    "rsi_14", "rsi_7",
-    "macd", "macd_signal", "macd_histogram",
-    "bb_upper", "bb_middle", "bb_lower", "bb_width", "bb_position",
-    "ema_9", "ema_21", "ema_50", "ema_200",
-    "ema_cross_9_21", "ema_cross_21_50",
-    "atr_14", "obv", "obv_ema",
-    "adx_14", "cci_20",
-    "stoch_k", "stoch_d",
-    "williams_r", "mfi_14", "vwap",
-    # Volume features
-    "volume_sma_20", "volume_ratio", "volume_spike",
-    # Price patterns
-    "price_vs_52w_high", "price_vs_52w_low", "distance_from_ema200",
-    # NSE calendar
-    "days_to_fo_expiry", "is_fo_expiry_week",
-    "is_rbi_week", "is_budget_month", "is_result_season",
-    # Market regime (from HMM — 0=bear, 1=sideways, 2=bull)
-    "market_regime",
+    # Price & Momentum
+    "daily_return", "weekly_return", "monthly_return",
+    # Technical Indicators & Oscillators
+    "rsi_7", "macd_histogram", "bb_width", "atr_14", "obv",
+    "adx_14", "cci_20", "stoch_k", "stoch_d", "mfi_14",
+    # Volume & Price Patterns
+    "volume_sma_20", "volume_ratio", "price_vs_52w_low",
 ]
 
 TARGET_COLUMN = "target"
 
-# Categorical feature indices for CatBoost (columns that are integer categories)
-# CatBoost handles these natively without one-hot encoding
-CATEGORICAL_FEATURES = [
-    "ema_cross_9_21", "ema_cross_21_50",
-    "volume_spike", "is_fo_expiry_week",
-    "is_rbi_week", "is_budget_month", "is_result_season",
-    "market_regime",
-]
+# Categorical feature list (All categorical/calendar features were dropped as noise)
+CATEGORICAL_FEATURES = []
 
 # Minimum rows required to train a model (skip if insufficient data)
 MIN_ROWS_FOR_TRAINING = 500
@@ -456,18 +435,24 @@ class StockModelTrainer:
             f"(best iter: {self.cat_model.best_iteration_})"
         )
 
+        # ── Predict probabilities on hold-out set ─────────────────────────────
+        lgb_proba = self.lgb_model.predict_proba(X_val_f)[:, 1]
+        cat_proba = self.cat_model.predict_proba(val_pool)[:, 1]
+
         # ── Improvement #3: Platt Scaling Confidence Calibration ──────────────
-        # CalibratedClassifierCV with cv="prefit" calibrates on the hold-out set
-        # After this, probability 0.72 actually means the stock goes up 72% of the time
-        self.calibrator = CalibratedClassifierCV(
-            self.lgb_model, method="sigmoid", cv="prefit"
-        )
-        self.calibrator.fit(X_val_f, y_val_f)
-        calibrated_proba = self.calibrator.predict_proba(X_val_f)[:, 1]
-        logger.info(
-            f"  {self.ticker}: Platt Scaling calibration applied "
-            f"(mean raw={lgb_proba.mean():.3f} → calibrated={calibrated_proba.mean():.3f})"
-        )
+        try:
+            self.calibrator = CalibratedClassifierCV(
+                estimator=self.lgb_model, method="sigmoid", cv="prefit"
+            )
+            self.calibrator.fit(X_val_f, y_val_f)
+            calibrated_proba = self.calibrator.predict_proba(X_val_f)[:, 1]
+            logger.info(
+                f"  {self.ticker}: Platt Scaling applied "
+                f"(mean raw={lgb_proba.mean():.3f} → calibrated={calibrated_proba.mean():.3f})"
+            )
+        except Exception as e:
+            logger.warning(f"  {self.ticker}: Calibration skipped ({e})")
+            self.calibrator = None
 
         # ── Final ensemble: simple 50/50 average (stable, interpretable) ─────────
         ens_proba = 0.5 * lgb_proba + 0.5 * cat_proba

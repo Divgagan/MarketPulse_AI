@@ -106,6 +106,8 @@ def _save_signal_to_db(signal: FinalSignal) -> None:
         "signal_strength":     signal["signal_strength"],
         "alert_text":          signal["alert_text"],
         "created_at":          signal["generated_at"],
+        # ── Sentinel: regime passthrough (one field, no other change) ─────────
+        "regime":              signal.get("ml_signal", {}).get("market_regime"),
     }
 
     # ── Write to local SQLite ─────────────────────────────────────────────────

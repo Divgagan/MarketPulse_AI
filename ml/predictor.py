@@ -47,21 +47,13 @@ logger = logging.getLogger("predictor")
 
 # ── Feature columns (same as model_trainer.py) ────────────────────────────────
 FEATURE_COLUMNS = [
-    "daily_return", "weekly_return", "monthly_return", "log_return",
-    "rsi_14", "rsi_7",
-    "macd", "macd_signal", "macd_histogram",
-    "bb_upper", "bb_middle", "bb_lower", "bb_width", "bb_position",
-    "ema_9", "ema_21", "ema_50", "ema_200",
-    "ema_cross_9_21", "ema_cross_21_50",
-    "atr_14", "obv", "obv_ema",
-    "adx_14", "cci_20",
-    "stoch_k", "stoch_d",
-    "williams_r", "mfi_14", "vwap",
-    "volume_sma_20", "volume_ratio", "volume_spike",
-    "price_vs_52w_high", "price_vs_52w_low", "distance_from_ema200",
-    "days_to_fo_expiry", "is_fo_expiry_week",
-    "is_rbi_week", "is_budget_month", "is_result_season",
-    "market_regime",
+    # Price & Momentum
+    "daily_return", "weekly_return", "monthly_return",
+    # Technical Indicators & Oscillators
+    "rsi_7", "macd_histogram", "bb_width", "atr_14", "obv",
+    "adx_14", "cci_20", "stoch_k", "stoch_d", "mfi_14",
+    # Volume & Price Patterns
+    "volume_sma_20", "volume_ratio", "price_vs_52w_low",
 ]
 
 TARGET_COLUMN = "target"

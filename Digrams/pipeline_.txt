@@ -1,0 +1,38 @@
+"So starting from the top — everything is triggered by 
+a GitHub Actions cron job that fires every weekday at 3:45 PM IST,
+ right after market close. That single trigger kicks off two pipelines
+  that run in parallel, not sequentially — you can see they branch off 
+  the same cron node.
+On the left is the ML pipeline. It starts by pulling ten years of OHLCV 
+— open, high, low, close, volume — price data for each stock, and engineers
+ about 40 technical indicator features from that, things like RSI, MACD,
+  ATR. Those features feed into three parallel model types for each of the 
+  50 NIFTY stocks: a LightGBM classifier trained per stock,
+   an HMM regime detector that figures out whether the overall market
+    is in a bull, bear, or sideways state, and Chronos, a zero-shot 
+    forecasting model that predicts price trajectory without needing 
+    per-stock training. Those three outputs get blended — 60% LightGBM, 
+    30% Chronos, 10% regime — into one ML signal.
+On the right is the news pipeline — this is the LangGraph side, seven 
+agents total. Agent 1 harvests articles from six RSS feeds and NewsAPI, 
+with deduplication so the same story doesn't get processed twice. 
+Agent 2 is a four-stage filter — cheapest checks first: a keyword 
+blocklist
+ to cut obvious noise, then named entity recognition to confirm the
+  article even mentions a market-relevant entity, then FinBERT for 
+  financial sentiment scoring, and only the survivors go through the 
+  most expensive step, an LLM gate. If nothing survives that filter, 
+  the pipeline skips straight to Agent 5 — no point running mapping or
+   scoring on zero articles. If articles do pass, Agent 3 maps them to
+    specific NIFTY tickers, Agent 4 scores how severe the impact is, and
+     Agent 5 cross-checks against live prices and validates whether
+      yesterday's calls played out.
+Both pipelines converge at Agent 6, the signal aggregator — it merges
+ the ML signal and the news signal, roughly 60-40, and if they conflict
+  with each other, it doesn't just pick one, it flags the conflict and
+   lowers its own confidence. It also generates a plain-English 
+   explanation of its reasoning.
+Agent 7 formats that into an alert, logs it to Supabase, and 
+sends an email notification. From there, the Streamlit dashboard
+ is stateless — it just reads fresh from Supabase on every page load,
+  so there's no separate caching layer to keep in sync."

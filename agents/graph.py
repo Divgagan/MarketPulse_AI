@@ -33,11 +33,13 @@ Run types:
 import logging
 import os
 from datetime import datetime, timezone
+from dotenv import load_dotenv
+
+load_dotenv()  # Load .env first so LangSmith credentials are available!
 
 # ── LangSmith tracing setup (Blueprint requirement) ───────────────────────────
 # Reads LANGCHAIN_TRACING_V2 from .env — set to "false" to disable LangSmith
 # Set to "true" and provide a valid LANGSMITH_API_KEY to enable tracing
-import os
 _tracing = os.environ.get("LANGCHAIN_TRACING_V2", "false").lower()
 if _tracing not in ("true", "1"):
     os.environ["LANGCHAIN_TRACING_V2"] = "false"

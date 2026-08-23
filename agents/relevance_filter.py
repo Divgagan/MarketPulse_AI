@@ -42,7 +42,7 @@ logger = logging.getLogger("relevance_filter")
 # ── Module-level model initialization (load once, reuse forever) ───────────────
 
 # spaCy NER model
-try:
+try:                          
     import spacy
     nlp = spacy.load("en_core_web_sm")
     SPACY_AVAILABLE = True
