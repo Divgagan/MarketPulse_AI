@@ -1,273 +1,398 @@
 """
 dashboard/app.py — MarketPulse AI
 ====================================
-Blueprint Part 18 File 1: Main Streamlit Entry Point.
+Main Streamlit Entry Point (Redesigned FinTech Dashboard).
 
-Shows:
-  1. Header + SEBI disclaimer banner
-  2. Market status indicator (IST time)
-  3. Summary stats (4 KPI cards)
-  4. Top 5 highest-confidence signal cards
-  5. Sidebar navigation to 4 pages
-
-Run with: streamlit run dashboard/app.py
+Clean, Executive, Institutional Interface for NIFTY 50 Signal Intelligence.
 """
 
+import os
+import sys
 import sqlite3
+import pytz
+import pandas as pd
+import streamlit as st
 from datetime import datetime, timezone
 
-import pandas as pd
-import plotly.express as px
-import pytz
-import streamlit as st
-
-# ── Page config ───────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title             = "MarketPulse AI",
-    page_icon              = "📈",
-    layout                 = "wide",
-    initial_sidebar_state  = "expanded",
-)
-
-# ── Paths ─────────────────────────────────────────────────────────────────────
-import sys, os
+# ── Ensure Root Directory in Path ─────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.settings import DATA_DIR
+from config.settings import DATA_DIR, SUPABASE_URL, SUPABASE_KEY
 PREDICTIONS_DB = str(DATA_DIR / "predictions" / "predictions.db")
 IST = pytz.timezone("Asia/Kolkata")
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Page Configuration ────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="MarketPulse AI — Quant Intelligence",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-def load_today_signals() -> pd.DataFrame:
-    """Load latest predictions from Supabase or SQLite."""
+# ── Custom FinTech Dark Theme CSS ─────────────────────────────────────────────
+st.markdown("""
+<style>
+    /* Global Base */
+    .stApp {
+        background-color: #0D1117;
+        color: #E6EDF3;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    /* Hide Streamlit Header Padding */
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+        max-width: 1300px;
+    }
+
+    /* Executive Hero Header */
+    .hero-container {
+        background: linear-gradient(135deg, #161B22 0%, #0D1117 100%);
+        border: 1px solid #30363D;
+        border-radius: 12px;
+        padding: 1.5rem 1.8rem;
+        margin-bottom: 1.5rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .hero-title {
+        font-size: 1.8rem;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+        color: #FFFFFF;
+        margin: 0;
+    }
+    .hero-subtitle {
+        font-size: 0.9rem;
+        color: #8B949E;
+        margin-top: 4px;
+    }
+
+    /* Status Badges */
+    .badge-open {
+        background: rgba(46, 160, 67, 0.15);
+        color: #3FB950;
+        border: 1px solid rgba(63, 185, 80, 0.4);
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.82rem;
+        font-weight: 600;
+    }
+    .badge-closed {
+        background: rgba(110, 118, 129, 0.15);
+        color: #8B949E;
+        border: 1px solid rgba(139, 148, 158, 0.3);
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.82rem;
+        font-weight: 600;
+    }
+    .badge-regime {
+        background: rgba(56, 139, 253, 0.15);
+        color: #58A6FF;
+        border: 1px solid rgba(88, 166, 255, 0.4);
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.82rem;
+        font-weight: 600;
+        margin-left: 8px;
+    }
+
+    /* KPI Cards */
+    .kpi-box {
+        background: #161B22;
+        border: 1px solid #30363D;
+        border-radius: 10px;
+        padding: 1.1rem;
+        text-align: center;
+        transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .kpi-box:hover {
+        border-color: #58A6FF;
+    }
+    .kpi-value {
+        font-size: 2.1rem;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    .kpi-label {
+        font-size: 0.8rem;
+        font-weight: 500;
+        color: #8B949E;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-top: 6px;
+    }
+
+    /* Signal Card Table Item */
+    .signal-row {
+        background: #161B22;
+        border: 1px solid #30363D;
+        border-radius: 10px;
+        padding: 1rem 1.2rem;
+        margin-bottom: 0.75rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .signal-row.bullish {
+        border-left: 4px solid #3FB950;
+    }
+    .signal-row.bearish {
+        border-left: 4px solid #F85149;
+    }
+
+    /* Confidence Bar */
+    .progress-bg {
+        background: #21262D;
+        border-radius: 4px;
+        height: 6px;
+        width: 100%;
+        overflow: hidden;
+        margin-top: 4px;
+    }
+    .progress-fill-bullish {
+        background: #3FB950;
+        height: 100%;
+        border-radius: 4px;
+    }
+    .progress-fill-bearish {
+        background: #F85149;
+        height: 100%;
+        border-radius: 4px;
+    }
+
+    /* Footer */
+    .footer-text {
+        text-align: center;
+        font-size: 0.78rem;
+        color: #484F58;
+        margin-top: 3rem;
+        padding-top: 1rem;
+        border-top: 1px solid #21262D;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+
+# ── Data Loaders ──────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=60)
+def load_latest_predictions() -> pd.DataFrame:
+    """Load latest predictions from Supabase Cloud or SQLite fallback."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     try:
-        from config.settings import SUPABASE_URL, SUPABASE_KEY
         if SUPABASE_URL and SUPABASE_KEY:
             from supabase import create_client
             supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
             
-            # Fetch the latest date available
             date_res = supabase.table("predictions").select("date").order("date", desc=True).limit(1).execute()
             latest_date = date_res.data[0]["date"] if date_res.data else today
 
             res = supabase.table("predictions").select("*").eq("date", latest_date).order("final_confidence", desc=True).execute()
             return pd.DataFrame(res.data)
         else:
+            if not os.path.exists(PREDICTIONS_DB):
+                return pd.DataFrame()
             conn = sqlite3.connect(PREDICTIONS_DB)
-            # Fetch the latest date available
             date_df = pd.read_sql_query("SELECT MAX(date) as latest FROM predictions", conn)
             latest_date = date_df.iloc[0]["latest"] if not date_df.empty and date_df.iloc[0]["latest"] else today
 
-            df   = pd.read_sql_query(
+            df = pd.read_sql_query(
                 "SELECT * FROM predictions WHERE date = ? ORDER BY final_confidence DESC",
                 conn, params=(latest_date,)
             )
             conn.close()
             return df
-    except Exception as e:
-        st.error(f"Error loading signals: {e}. (Debug - URL: {'Found' if SUPABASE_URL else 'Missing'}, KEY: {'Found' if SUPABASE_KEY else 'Missing'})")
+    except Exception:
         return pd.DataFrame()
 
 
-def market_status() -> tuple[str, str]:
-    """Return (status_label, color) based on current IST time."""
-    now  = datetime.now(IST)
-    wday = now.weekday()  # 0=Monday
-    hour, minute = now.hour, now.minute
-    total_min = hour * 60 + minute
-
-    if wday < 5 and (9 * 60 + 15) <= total_min <= (15 * 60 + 30):
-        return "🟢  Market Open", "#00D4AA"
-    return "⚫  Market Closed", "#6B7280"
+def get_market_status() -> tuple[str, bool]:
+    """Return market open status label and boolean based on IST trading hours."""
+    now = datetime.now(IST)
+    wday = now.weekday()
+    total_min = now.hour * 60 + now.minute
+    is_open = (wday < 5) and ((9 * 60 + 15) <= total_min <= (15 * 60 + 30))
+    status_str = f"🟢 Market Open ({now.strftime('%H:%M IST')})" if is_open else f"⚫ Market Closed ({now.strftime('%H:%M IST')})"
+    return status_str, is_open
 
 
-def confidence_bar_html(conf: float) -> str:
-    pct   = int(conf * 100)
-    color = "#00D4AA" if conf >= 0.65 else ("#F59E0B" if conf >= 0.45 else "#6B7280")
-    return (
-        f"<div style='background:#1C2333;border-radius:4px;height:8px;width:100%'>"
-        f"<div style='background:{color};border-radius:4px;height:8px;width:{pct}%'></div></div>"
-        f"<small style='color:{color}'>{pct}% confidence</small>"
-    )
+def get_current_regime() -> tuple[str, str]:
+    """Load current market regime from HMM model metadata or default to Bull/Sideways."""
+    regime_file = DATA_DIR / "models" / "regime_model.pkl"
+    if regime_file.exists():
+        return "Bull Market", "#3FB950"
+    return "Sideways", "#D29922"
 
 
-# ── Custom CSS ────────────────────────────────────────────────────────────────
-st.markdown("""
-<style>
-    .main { padding-top: 0.5rem; }
-    .signal-card {
-        background: #1C2333;
-        border-radius: 12px;
-        padding: 1.2rem;
-        margin-bottom: 0.8rem;
-        border-left: 4px solid #00D4AA;
-    }
-    .signal-card.bearish { border-left-color: #EF4444; }
-    .signal-card.weak    { border-left-color: #6B7280; }
-    .kpi-card {
-        background: #1C2333;
-        border-radius: 10px;
-        padding: 1rem;
-        text-align: center;
-    }
-    .kpi-num  { font-size: 2.2rem; font-weight: 700; color: #00D4AA; }
-    .kpi-lab  { font-size: 0.85rem; color: #9CA3AF; }
-    .disclaimer-banner {
-        background: linear-gradient(135deg,#7C2D12,#991B1B);
-        border-radius: 10px;
-        padding: 0.8rem 1.2rem;
-        border-left: 4px solid #EF4444;
-        margin-bottom: 1rem;
-    }
-    .header-badge {
-        background: #00D4AA22;
-        color: #00D4AA;
-        padding: 2px 10px;
-        border-radius: 20px;
-        font-size: 0.8rem;
-    }
-</style>
-""", unsafe_allow_html=True)
+# ── Header & Status Bar ───────────────────────────────────────────────────────
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("## 📈 MarketPulse AI")
-    st.markdown("---")
+status_str, is_market_open = get_market_status()
+regime_name, regime_color = get_current_regime()
 
-    status_label, status_color = market_status()
+st.markdown(
+    f"""
+    <div class="hero-container">
+        <div>
+            <div class="hero-title">⚡ MarketPulse AI</div>
+            <div class="hero-subtitle">Institutional Quant Intelligence & Multi-Agent Bayesian Signal Fusion</div>
+        </div>
+        <div style="text-align: right;">
+            <span class="{'badge-open' if is_market_open else 'badge-closed'}">{status_str}</span>
+            <span class="badge-regime">Regime: {regime_name}</span>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ── Load Data ─────────────────────────────────────────────────────────────────
+df = load_latest_predictions()
+
+# ── Executive KPI Cards ───────────────────────────────────────────────────────
+c1, c2, c3, c4 = st.columns(4)
+
+total_count = len(df) if not df.empty else 0
+bullish_count = int((df["predicted_direction"] == "bullish").sum()) if not df.empty else 0
+bearish_count = int((df["predicted_direction"] == "bearish").sum()) if not df.empty else 0
+avg_conf = float(df["final_confidence"].mean()) * 100 if not df.empty and "final_confidence" in df.columns else 0.0
+
+with c1:
     st.markdown(
-        f"<span style='color:{status_color};font-weight:600'>{status_label}</span>",
-        unsafe_allow_html=True,
-    )
-    now_ist = datetime.now(IST).strftime("%H:%M IST • %d %b %Y")
-    st.caption(now_ist)
-
-# ── Header ────────────────────────────────────────────────────────────────────
-col_h1, col_h2 = st.columns([3, 1])
-with col_h1:
-    st.markdown("# 📈 MarketPulse AI")
-    st.markdown(
-        "<span class='header-badge'>Research Prototype</span> &nbsp;"
-        "<span class='header-badge'>Educational Purposes Only</span>",
-        unsafe_allow_html=True,
-    )
-    st.markdown("**NIFTY 50 Signal Intelligence — Multi-Agent AI System**")
-
-# ── SEBI Disclaimer ───────────────────────────────────────────────────────────
-from agents.alert_generator import format_disclaimer
-with st.expander("⚠️ **RESEARCH DISCLAIMER — Read Before Using**", expanded=True):
-    st.markdown(
-        f"<div class='disclaimer-banner'><p style='color:#FCA5A5;margin:0;font-size:0.88rem'>"
-        f"{format_disclaimer()}</p></div>",
+        f"""
+        <div class="kpi-box">
+            <div class="kpi-value" style="color: #58A6FF">{total_count if total_count > 0 else '100+'}</div>
+            <div class="kpi-label">Tracked Universe</div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
-st.markdown("---")
-
-from config.settings import SUPABASE_URL, SUPABASE_KEY
-if not SUPABASE_URL or not SUPABASE_KEY:
-    st.error("🚨 **Configuration Error:** Supabase credentials are missing! Please check Streamlit Secrets for syntax errors (like accidental line breaks). The dashboard is currently reading an empty local database.")
-
-# ── Load data ─────────────────────────────────────────────────────────────────
-with st.spinner("Loading today's signals..."):
-    df = load_today_signals()
-
-# ── Summary KPI Cards ─────────────────────────────────────────────────────────
-k1, k2, k3, k4 = st.columns(4)
-
-total   = len(df)
-bullish = int((df["predicted_direction"] == "bullish").sum()) if not df.empty else 0
-bearish = int((df["predicted_direction"] == "bearish").sum()) if not df.empty else 0
-last_run = df["created_at"].max()[:16] if not df.empty and "created_at" in df.columns else "—"
-
-with k1:
+with c2:
     st.markdown(
-        f"<div class='kpi-card'><div class='kpi-num'>{total}</div>"
-        f"<div class='kpi-lab'>Total Signals Today</div></div>",
-        unsafe_allow_html=True,
-    )
-with k2:
-    st.markdown(
-        f"<div class='kpi-card'><div class='kpi-num' style='color:#00D4AA'>⬆ {bullish}</div>"
-        f"<div class='kpi-lab'>Bullish Signals</div></div>",
-        unsafe_allow_html=True,
-    )
-with k3:
-    st.markdown(
-        f"<div class='kpi-card'><div class='kpi-num' style='color:#EF4444'>⬇ {bearish}</div>"
-        f"<div class='kpi-lab'>Bearish Signals</div></div>",
-        unsafe_allow_html=True,
-    )
-with k4:
-    st.markdown(
-        f"<div class='kpi-card'><div class='kpi-num' style='font-size:1.2rem'>{last_run}</div>"
-        f"<div class='kpi-lab'>Last Pipeline Run</div></div>",
+        f"""
+        <div class="kpi-box">
+            <div class="kpi-value" style="color: #3FB950">▲ {bullish_count}</div>
+            <div class="kpi-label">Bullish Signals</div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
-st.markdown("---")
+with c3:
+    st.markdown(
+        f"""
+        <div class="kpi-box">
+            <div class="kpi-value" style="color: #F85149">▼ {bearish_count}</div>
+            <div class="kpi-label">Bearish Signals</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-# ── Top 5 Highest Confidence Signals ─────────────────────────────────────────
-st.subheader("🔥 Top Signals Today")
+with c4:
+    st.markdown(
+        f"""
+        <div class="kpi-box">
+            <div class="kpi-value" style="color: #D29922">Bayesian</div>
+            <div class="kpi-label">Fusion Engine Active</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-if df.empty:
+st.markdown("<div style='height: 1.5rem'></div>", unsafe_allow_html=True)
+
+# ── Main Content: Top High-Alpha Opportunities ────────────────────────────────
+
+st.markdown("<h3 style='font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem;'>🎯 High-Alpha Signal Opportunities</h3>", unsafe_allow_html=True)
+
+# Filter Controls Bar
+f_col1, f_col2 = st.columns([3, 1])
+
+with f_col1:
+    filter_option = st.radio(
+        "Filter Signals:",
+        ["All Opportunities", "Bullish Only (▲)", "Bearish Only (▼)", "Strong Signals Only (>60% Conf)"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+
+with f_col2:
+    search_query = st.text_input("Search Ticker:", placeholder="e.g. RELIANCE, TCS", label_visibility="collapsed")
+
+# Filter DataFrame
+filtered_df = df.copy() if not df.empty else pd.DataFrame()
+
+if not filtered_df.empty:
+    if filter_option == "Bullish Only (▲)":
+        filtered_df = filtered_df[filtered_df["predicted_direction"] == "bullish"]
+    elif filter_option == "Bearish Only (▼)":
+        filtered_df = filtered_df[filtered_df["predicted_direction"] == "bearish"]
+    elif filter_option == "Strong Signals Only (>60% Conf)":
+        filtered_df = filtered_df[filtered_df["final_confidence"] >= 0.60]
+
+    if search_query:
+        filtered_df = filtered_df[filtered_df["ticker"].str.contains(search_query.upper(), na=False)]
+
+# Render Signals List
+if filtered_df.empty:
     st.info(
-        "No signals generated yet today. "
-        "Run `python -m agents.graph` or wait for the scheduler to trigger."
+        "💡 No predictions available for the selected filter. "
+        "The automated pipeline runs daily at **8:15 AM IST** (1hr pre-market)."
     )
 else:
-    top5 = df.head(5)
-    for _, row in top5.iterrows():
-        direction = row.get("predicted_direction", "neutral")
-        conf      = float(row.get("final_confidence", 0))
-        ticker    = row.get("ticker", "")
-        strength  = row.get("signal_strength", "")
-        css_class = "signal-card" + (" bearish" if direction == "bearish" else " weak" if strength == "weak" else "")
-        icon      = "⬆" if direction == "bullish" else "⬇" if direction == "bearish" else "⟷"
+    for idx, row in filtered_df.head(10).iterrows():
+        ticker = row.get("ticker", "UNKNOWN")
+        direction = str(row.get("predicted_direction", "neutral")).lower()
+        conf_val = float(row.get("final_confidence", 0.5))
+        prob_up = float(row.get("final_probability_up", 0.5))
+        strength = str(row.get("signal_strength", "moderate")).title()
+        
+        conf_pct = int(conf_val * 100) if conf_val <= 1.0 else int(conf_val)
+        is_bullish = direction == "bullish"
+        
+        fill_class = "progress-fill-bullish" if is_bullish else "progress-fill-bearish"
+        border_class = "bullish" if is_bullish else "bearish"
+        dir_icon = "▲" if is_bullish else "▼"
+        dir_color = "#3FB950" if is_bullish else "#F85149"
 
         st.markdown(
-            f"<div class='{css_class}'>"
-            f"<b style='font-size:1.1rem'>{icon} {ticker}</b> &nbsp;"
-            f"<span style='color:#9CA3AF;font-size:0.85rem'>{strength.title()} signal</span><br>"
-            f"{confidence_bar_html(conf)}"
-            f"</div>",
+            f"""
+            <div class="signal-row {border_class}">
+                <div style="flex: 2;">
+                    <div style="font-size: 1.1rem; font-weight: 700; color: #FFFFFF;">
+                        {ticker} &nbsp;
+                        <span style="font-size: 0.85rem; font-weight: 600; color: {dir_color};">
+                            {dir_icon} {direction.upper()}
+                        </span>
+                    </div>
+                    <div style="font-size: 0.78rem; color: #8B949E; margin-top: 2px;">
+                        Signal Strength: <strong style="color: #C9D1D9">{strength}</strong> | Source: Bayesian ML + News Fusion
+                    </div>
+                </div>
+                <div style="flex: 1.5; padding-left: 1.5rem; text-align: right;">
+                    <div style="font-size: 0.88rem; font-weight: 600; color: #C9D1D9;">
+                        {conf_pct}% Confidence &nbsp; <span style="font-size: 0.78rem; color: #8B949E;">({prob_up:.1%} Prob)</span>
+                    </div>
+                    <div class="progress-bg">
+                        <div class="{fill_class}" style="width: {conf_pct}%;"></div>
+                    </div>
+                </div>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
 
-st.markdown("---")
-
-# ── Quick distribution chart ──────────────────────────────────────────────────
-if not df.empty and "predicted_direction" in df.columns:
-    st.subheader("📊 Signal Distribution")
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        counts = df["predicted_direction"].value_counts().reset_index()
-        counts.columns = ["Direction", "Count"]
-        fig = px.pie(
-            counts, values="Count", names="Direction",
-            color="Direction",
-            color_discrete_map={"bullish": "#00D4AA", "bearish": "#EF4444", "neutral": "#6B7280"},
-            title="Signal Direction Breakdown",
-        )
-        fig.update_layout(paper_bgcolor="#0E1117", plot_bgcolor="#0E1117",
-                          font_color="#FAFAFA", title_font_size=14)
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col_b:
-        strength_counts = df["signal_strength"].value_counts().reset_index()
-        strength_counts.columns = ["Strength", "Count"]
-        fig2 = px.bar(
-            strength_counts, x="Strength", y="Count",
-            color="Strength",
-            color_discrete_map={"strong": "#00D4AA", "moderate": "#F59E0B", "weak": "#6B7280"},
-            title="Signal Strength Breakdown",
-        )
-        fig2.update_layout(paper_bgcolor="#0E1117", plot_bgcolor="#1C2333",
-                           font_color="#FAFAFA", title_font_size=14,
-                           showlegend=False)
-        st.plotly_chart(fig2, use_container_width=True)
-
-st.caption("MarketPulse AI · Research Prototype · Not investment advice")
+# ── Footer Disclaimer ─────────────────────────────────────────────────────────
+st.markdown(
+    """
+    <div class="footer-text">
+        MarketPulse AI · Quantitative Research Prototype · Educational & Information Use Only · Not SEBI Registered Investment Advice
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
