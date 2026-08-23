@@ -14,8 +14,7 @@ pages = {
     "Analysis": [
         st.Page("dashboard/pages/1_predictions.py", title="Predictions", icon="🎯"),
         st.Page("dashboard/pages/2_news_signals.py", title="News Signals", icon="📰"),
-        st.Page("dashboard/pages/3_backtesting.py", title="Backtesting", icon="⏱️"),
-        st.Page("dashboard/pages/5_historical_predictions.py", title="Historical Verification", icon="🕒"),
+        st.Page("dashboard/pages/3_backtesting.py", title="Backtesting & Time Machine", icon="⏱️"),
     ]
 }
 

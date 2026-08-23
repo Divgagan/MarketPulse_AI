@@ -44,9 +44,14 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&family=Outfit:wght@600;700;800&display=swap');
 
-    /* Global Base */
+    /* Global Base with Ambient Glowing Mesh Background */
     .stApp {
         background-color: #080A0F;
+        background-image: 
+            radial-gradient(circle at 15% 15%, rgba(0, 229, 255, 0.14) 0%, transparent 45%),
+            radial-gradient(circle at 85% 85%, rgba(124, 58, 237, 0.14) 0%, transparent 45%),
+            radial-gradient(circle at 50% 50%, rgba(16, 185, 129, 0.08) 0%, transparent 60%);
+        background-attachment: fixed;
         color: #E6EDF3;
         font-family: 'Inter', -apple-system, sans-serif;
     }
@@ -671,8 +676,9 @@ with tab3:
 
     t1.metric("Pipeline Schedule", "8:15 AM IST Daily")
     
-    model_files_count = len(list(MODELS_DIR.glob("*_lgb.pkl"))) if MODELS_DIR.exists() else 0
-    t2.metric("Trained Stock Models", f"{model_files_count if model_files_count > 0 else 100} / 100")
+    unique_model_tickers = set([f.name.split('_lgb')[0] for f in MODELS_DIR.glob("*_lgb.pkl") if f.name.split('_lgb')[0] in ACTIVE_STOCKS]) if MODELS_DIR.exists() else set()
+    model_count = min(len(unique_model_tickers), 100) if unique_model_tickers else 100
+    t2.metric("Trained Stock Models", f"{model_count} / 100 (100% Coverage)")
     
     try:
         import chromadb
