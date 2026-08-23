@@ -13,6 +13,7 @@ Features:
 
 import os
 import sys
+import base64
 import sqlite3
 import pytz
 import numpy as np
@@ -32,12 +33,21 @@ PREDICTIONS_DB = str(DATA_DIR / "predictions" / "predictions.db")
 IST = pytz.timezone("Asia/Kolkata")
 
 # ── Page Configuration ────────────────────────────────────────────────────────
+LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png")
+
 st.set_page_config(
     page_title="MarketPulse AI — Quant Intelligence Terminal",
-    page_icon="⚡",
+    page_icon=LOGO_PATH if os.path.exists(LOGO_PATH) else "⚡",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+def get_logo_base64() -> str:
+    """Return base64 string for dashboard/assets/logo.png."""
+    if os.path.exists(LOGO_PATH):
+        with open(LOGO_PATH, "rb") as f:
+            return f"data:image/png;base64,{base64.b64encode(f.read()).decode()}"
+    return ""
 
 # ── Custom FinTech Dark Theme & Glassmorphism CSS ──────────────────────────────
 st.markdown("""
@@ -365,17 +375,36 @@ def get_current_regime() -> tuple[str, str]:
     return "Sideways", "#D29922"
 
 
-# ── Header & Status Bar ───────────────────────────────────────────────────────
+# ── Sidebar Branding & Header ──────────────────────────────────────────────────
+logo_b64 = get_logo_base64()
+
+with st.sidebar:
+    if logo_b64:
+        st.markdown(
+            f"""
+            <div style="text-align: center; padding: 10px 0 6px 0;">
+                <img src="{logo_b64}" style="width: 75px; height: 75px; border-radius: 16px; box-shadow: 0 0 25px rgba(0, 229, 255, 0.4); border: 1px solid rgba(255, 255, 255, 0.15);" />
+                <div style="font-family: 'Outfit', sans-serif; font-size: 1.2rem; font-weight: 800; color: #FFFFFF; margin-top: 8px;">MarketPulse AI</div>
+                <div style="font-size: 0.75rem; color: #8B949E;">Quant Intelligence Terminal</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 status_str, is_market_open = get_market_status()
 regime_name, regime_color = get_current_regime()
 
+logo_img_html = f'<img src="{logo_b64}" style="height: 54px; width: 54px; border-radius: 12px; box-shadow: 0 0 20px rgba(0, 229, 255, 0.35); border: 1px solid rgba(255, 255, 255, 0.15);" />' if logo_b64 else '⚡'
+
 st.markdown(
     f"""
     <div class="hero-container">
-        <div>
-            <div class="hero-title">⚡ MarketPulse AI</div>
-            <div class="hero-subtitle">Institutional Quant Terminal & Multi-Agent Bayesian Fusion</div>
+        <div style="display: flex; align-items: center; gap: 16px;">
+            {logo_img_html}
+            <div>
+                <div class="hero-title">MarketPulse AI</div>
+                <div class="hero-subtitle">Institutional Quant Terminal & Multi-Agent Bayesian Fusion</div>
+            </div>
         </div>
         <div style="text-align: right;">
             <span class="{'badge-open' if is_market_open else 'badge-closed'}">{status_str}</span>
