@@ -546,7 +546,7 @@ with tab1:
                         font=dict(color="#C9D1D9", size=11), height=180,
                         margin=dict(l=10, r=10, t=10, b=10), coloraxis_showscale=False,
                     )
-                    st.plotly_chart(fig_shap, use_container_width=True)
+                    st.plotly_chart(fig_shap, use_container_width=True, key=f"shap_{ticker}_{idx}")
 
                 with exp_c2:
                     st.markdown("<div style='font-size:0.82rem; font-weight:600; color:#58A6FF;'>Engine Weight Breakdown</div>", unsafe_allow_html=True)
@@ -578,7 +578,7 @@ with tab1:
         margin=dict(l=10, r=10, t=10, b=10), height=320,
         coloraxis_showscale=False,
     )
-    st.plotly_chart(fig_tree, use_container_width=True)
+    st.plotly_chart(fig_tree, use_container_width=True, key="sector_treemap_chart")
 
 
 # ==============================================================================
@@ -607,7 +607,7 @@ with tab2:
         yaxis_range=[0.45, 0.88], hovermode="x unified",
         margin=dict(l=40, r=40, t=30, b=40),
     )
-    st.plotly_chart(fig_trend, use_container_width=True)
+    st.plotly_chart(fig_trend, use_container_width=True, key="trend_accuracy_chart")
 
     col_calib, col_cm = st.columns(2)
 
@@ -633,7 +633,7 @@ with tab2:
             xaxis_range=[0, 1], yaxis_range=[0, 1],
             margin=dict(l=40, r=40, t=30, b=40),
         )
-        st.plotly_chart(fig_cal, use_container_width=True)
+        st.plotly_chart(fig_cal, use_container_width=True, key="calibration_curve_chart")
 
     with col_cm:
         st.markdown("<h4 style='color: #58A6FF; margin-bottom: 0.5rem;'>📋 Confusion Matrix & Metrics</h4>", unsafe_allow_html=True)
@@ -653,7 +653,7 @@ with tab2:
             xaxis_title="Actual Outcome", yaxis_title="Predicted Class",
             margin=dict(l=40, r=40, t=30, b=40),
         )
-        st.plotly_chart(fig_cm, use_container_width=True)
+        st.plotly_chart(fig_cm, use_container_width=True, key="confusion_matrix_chart")
 
         m1, m2, m3 = st.columns(3)
         m1.metric("Overall Accuracy", "69.2%")
