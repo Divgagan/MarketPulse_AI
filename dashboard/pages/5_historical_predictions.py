@@ -202,15 +202,15 @@ def fetch_batch_outcomes(tickers_tuple, pred_date_str):
     Downloads price data for ALL tickers in one yfinance call.
     Returns dict: {ticker: (actual_dir, pct_change)} or {ticker: (None, None)}
     """
-    import yfinance as yf
-    from datetime import timedelta
-
-    pred_date = pd.Timestamp(pred_date_str)
-    start     = pred_date.strftime("%Y-%m-%d")
-    end       = (pred_date + timedelta(days=7)).strftime("%Y-%m-%d")
-
     outcomes = {}
     try:
+        import yfinance as yf
+        from datetime import timedelta
+
+        pred_date = pd.Timestamp(pred_date_str)
+        start     = pred_date.strftime("%Y-%m-%d")
+        end       = (pred_date + timedelta(days=7)).strftime("%Y-%m-%d")
+
         # Download all tickers at once — much faster than one-by-one
         raw = yf.download(
             list(tickers_tuple), start=start, end=end,
