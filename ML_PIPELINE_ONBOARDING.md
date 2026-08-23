@@ -157,13 +157,15 @@ In `ml/backtesting.py`, we use the **vectorbt** library to simulate actually tra
 
 ### Combination Logic (`ml/signal_combiner.py` Line 41)
 
-- ML models are weighted: **60% LightGBM + 30% Chronos + 10% HMM Regime Bias**
+- ML models are weighted: **60% LightGBM/CatBoost Ensemble + 30% Chronos + 10% HMM Regime Bias**
 - If Chronos says "Bullish" with high confidence, its 30% weight is added to LightGBM.
-- If the Regime is "Bull", an arbitrary math bump of `+0.03` is added.
+- If the Regime is "Bull", a bias adjustment of `+0.03` is added.
 - If the final ML probability > `0.5`, the signal is **BULLISH**.
 
-### News Override (Line 130)
-If the LangGraph News Agent detects a **"MAJOR"** news event with >80% confidence, it **completely overrides** the math.
+### Bayesian News Signal Fusion (`ml/signal_combiner.py` Line 130)
+- Uses **Bayesian Dynamic Updating** (Prior vs. Likelihood Ratio) to combine ML prior probability with News Agent impact scores.
+- When ML and News conflict, Bayes' Theorem mathematically pulls the posterior probability towards $0.50$ (neutrality) and dynamically shrinks confidence without static hardcoded hacks.
+- If high-confidence major news occurs, the Likelihood Ratio naturally shifts the ML prior.
 
 ---
 
@@ -174,7 +176,7 @@ If the LangGraph News Agent detects a **"MAJOR"** news event with >80% confidenc
 | **Data Leakage** | ✅ Safe | `.shift(-1)` for target + `TimeSeriesSplit` ensures the model strictly cannot see the future. |
 | **Look-Ahead Bias in Backtesting** | ✅ Safe | `vectorbt` simulates step-by-step trading. Signal shifted by 1 day (`signal_matrix.shift(1)`) ensures we only buy *after* the signal is generated (Line 181). |
 | **Stationarity** | ⚠️ Risk | Financial data drifts constantly. RSI meant something different in 1999 than in 2024. We do **not** currently apply fractional differencing to force stationarity on features. |
-| **Model Retraining Cadence** | ✅ Automated | GitHub Actions (`.github/workflows/agent_pipeline.yml`) runs a monthly cron job that entirely retrains LightGBM models on the 1st of every month. |
-| **Drift Detection** | ⚠️ Risk | There is **no active monitoring** to detect if live data distributions start diverging from training data. |
-| **Model Versioning** | ⚠️ Risk | We do **not** use MLflow or a model registry. Training simply overwrites `{ticker}_lgb.pkl`. If a bad model is trained, there is **no automated rollback** mechanism. |
-| **Confidence Calibration** | ⚠️ Risk | "Confidence: 0.72" is a scaled raw model score — **NOT** Platt Scaled or Isotonic Calibrated. If we look at 100 predictions with "72% confidence", they won't necessarily be right exactly 72% of the time. |
+| **Model Retraining & Execution Cadence** | ✅ Automated | ML pipeline runs daily at **8:15 AM IST** (1hr pre-market) via `.github/workflows/agent_pipeline.yml`. Monthly retraining runs on 1st of every month at 8 PM IST. |
+| **Drift Detection** | ✅ Resolved | `ml/drift_monitor.py` uses Evidently AI & PSI to compare 30-day live feature distributions vs historical baseline. |
+| **Model Versioning** | ✅ Resolved | `ml/model_registry.py` uses MLflow tracking to version runs and support automated rollback (`rollback_to_best`). |
+| **Confidence Calibration** | ✅ Resolved | `ml/model_trainer.py` uses `CalibratedClassifierCV` (Platt Scaling) so raw model probability outputs match real-world probabilities. |

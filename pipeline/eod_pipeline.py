@@ -3,7 +3,7 @@ pipeline/eod_pipeline.py — MarketPulse AI
 ==========================================
 Blueprint Part 17 File 1: EOD Pipeline.
 
-Runs every day at 3:45 PM IST (15 minutes after market close).
+Runs daily at 8:15 AM IST (1 hour before market open at 9:15 AM IST).
 Executes the full ML pipeline first, then passes ML results to agents.
 
 Pipeline steps:
@@ -261,7 +261,7 @@ def _step7_run_agents(ml_signals: list) -> dict:
 
 def run_eod_pipeline() -> dict:
     """
-    Full End-of-Day pipeline. Run at 3:45 PM IST after market close.
+    Full ML & Agent pipeline. Runs daily at 8:15 AM IST (1hr before market open).
 
     Returns:
         Final state dict from agent pipeline (or empty dict on fatal failure)

@@ -27,7 +27,7 @@ is set in .env (LANGCHAIN_TRACING_V2=true, PROJECT=marketpulse-ai).
 
 Run types:
   "news_cycle" — every 30 min during market hours (news only)
-  "eod_full"   — daily at 3:45 PM (full ML + news pipeline)
+  "eod_full"   — daily at 8:15 AM IST (full 1hr pre-market ML + news pipeline)
 """
 
 import logging

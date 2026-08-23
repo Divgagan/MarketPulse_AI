@@ -467,7 +467,7 @@ def predict_all_stocks(current_regime: str = "unknown") -> list:
             if len(df) < 5:
                 logger.warning(f"  {ticker}: Too few rows ({len(df)}) — skipping")
                 continue
-
+                
             predictor = StockPredictor(ticker)
             
             # Inject market regime code if missing

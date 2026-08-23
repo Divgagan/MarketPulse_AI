@@ -20,6 +20,9 @@ WEIGHTING SCHEME (ML + News combined):
 
 import logging
 
+import math
+import logging
+
 # ── Logger ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -125,113 +128,73 @@ def combine_signals(lgbm_pred: dict, chronos_pred: dict, regime: str) -> dict:
     return result
 
 
-# ── combine_with_news_signal: ML + News Agent ─────────────────────────────────
+# ── combine_with_news_signal: ML + News Agent (Bayesian Dynamic Updating) ────
 
 def combine_with_news_signal(ml_signal: dict, news_signal: dict) -> dict:
     """
-    Merge ML combined signal with News Agent impact score into final signal.
+    Merge ML combined signal with News Agent impact score using Bayesian Dynamic Updating.
 
-    Args:
-        ml_signal   : Output from combine_signals() above
-                      Must have: ticker, final_probability_up, final_direction,
-                                 final_confidence
-        news_signal : Output from Agent 4 (ImpactScore aggregated per ticker)
-                      Must have: direction, confidence, severity
-                      direction = "bullish" / "bearish" / "neutral"
-                      severity  = "minor" / "moderate" / "major"
-                      confidence = float 0.0–1.0
-
-    Returns:
-        Full merged signal dict with reasoning, conflict flags, and override info.
+    Bayesian Principles Applied:
+      1. Prior Odds: Calculated from Calibrated ML Probability (p_ml).
+      2. News Likelihood Ratio (LR_news): Log-odds shift derived from News Direction,
+         LLM Confidence, and Severity Weight.
+      3. Posterior Odds: Odds_posterior = Odds_ML * LR_news.
+      4. Self-Correction: When ML prior and News Likelihood conflict, Bayes' Rule
+         mathematically pulls posterior probability towards 0.50 (neutrality),
+         which naturally shrinks confidence without hardcoded hacks.
     """
     ticker = ml_signal.get("ticker", "UNKNOWN")
 
     ml_prob      = float(ml_signal.get("final_probability_up", 0.5))
     ml_dir       = ml_signal.get("final_direction", "bearish")
-    ml_conf      = float(ml_signal.get("final_confidence", 0.0))
 
     news_dir     = news_signal.get("direction", "neutral")
     news_conf    = float(news_signal.get("confidence", 0.0))
     news_sev     = news_signal.get("severity", "minor")
     news_reason  = news_signal.get("reasoning", "")
 
-    # ── Special Case: MAJOR news override ────────────────────────────────────
-    # If news is a high-confidence major event, it overrides ML entirely
-    # (earnings shock, RBI surprise rate cut, geopolitical crisis etc.)
-    if news_sev == "major" and news_conf > 0.8:
-        if news_dir == "bullish":
-            final_prob = max(ml_prob, 0.80)     # Floor at 80% for major bullish
-        elif news_dir == "bearish":
-            final_prob = min(ml_prob, 0.20)     # Ceiling at 20% for major bearish
-        else:
-            final_prob = ml_prob                # Neutral major news → no override
+    # Bound ML prior probability to prevent division by zero in odds
+    p_ml = max(0.01, min(0.99, ml_prob))
+    odds_ml = p_ml / (1.0 - p_ml)
 
-        final_direction  = "bullish" if final_prob > 0.5 else "bearish"
-        final_confidence = round(abs(final_prob - 0.5) * 2, 4)
-        signals_agree    = (ml_dir == final_direction)
-        conflicting      = not signals_agree
+    # Severity scale factor for News Likelihood Ratio
+    severity_scale = {"minor": 0.6, "moderate": 1.0, "major": 1.8}
+    eff_severity = severity_scale.get(news_sev, 0.6)
 
-        logger.info(
-            f"  {ticker}: MAJOR NEWS OVERRIDE — {news_dir.upper()} "
-            f"(conf={news_conf:.2f}) overrides ML signal"
-        )
+    # Direction multiplier: +1.5 for bullish, -1.5 for bearish, 0 for neutral
+    dir_mult = 1.5 if news_dir == "bullish" else (-1.5 if news_dir == "bearish" else 0.0)
 
-        return {
-            "ticker":                ticker,
-            "final_probability_up":  round(final_prob, 4),
-            "final_direction":       final_direction,
-            "final_confidence":      final_confidence,
-            "signal_sources":        ["lgbm", "chronos", "regime", "news_MAJOR"],
-            "signals_agree":         signals_agree,
-            "conflicting_signals":   conflicting,
-            "news_override":         True,
-            "ml_signal":             ml_signal,
-            "news_signal":           news_signal,
-            "reasoning":             f"Major news override: {news_reason}",
-        }
+    # Log-Likelihood Ratio shift
+    delta_log_odds = eff_severity * news_conf * dir_mult
+    lr_news = math.exp(delta_log_odds)
 
-    # ── Normal Case: weighted blend (60% ML, 40% News) ───────────────────────
-    # Convert news direction to probability
-    if news_dir == "bullish":
-        news_prob = 0.5 + (news_conf * 0.5)
-    elif news_dir == "bearish":
-        news_prob = 0.5 - (news_conf * 0.5)
-    else:
-        news_prob = 0.5   # neutral news = no adjustment
-
-    # Severity multiplier — major news carries more weight
-    severity_weight = {"minor": 0.7, "moderate": 0.85, "major": 1.0}
-    news_weight_adj = severity_weight.get(news_sev, 0.7)
-
-    # Weighted blend: 60% ML + 40% News (adjusted for severity)
-    final_prob = (ml_prob * 0.60) + (news_prob * 0.40 * news_weight_adj)
-
-    # If severity is minor, remaining weight stays with ML
-    if news_sev == "minor":
-        remainder = 0.40 * (1.0 - news_weight_adj)
-        final_prob += ml_prob * remainder
-
-    final_prob  = float(max(0.01, min(0.99, final_prob)))
+    # Compute Bayesian Posterior Odds & Probability
+    odds_posterior = odds_ml * lr_news
+    final_prob = odds_posterior / (1.0 + odds_posterior)
+    final_prob = float(max(0.01, min(0.99, final_prob)))
 
     final_direction  = "bullish" if final_prob > 0.5 else "bearish"
     final_confidence = round(abs(final_prob - 0.5) * 2, 4)
 
-    # ── Conflict detection ───────────────────────────────────────────────────
-    signals_agree    = (ml_dir == news_dir) or news_dir == "neutral"
-    conflicting      = not signals_agree and news_conf > 0.5
+    # Signals agreement & conflict check
+    signals_agree = (ml_dir == news_dir) or news_dir == "neutral"
+    conflicting   = not signals_agree and news_conf > 0.4
+    news_override = (news_sev == "major" and news_conf > 0.8 and conflicting)
 
-    if conflicting:
-        # Reduce confidence when ML and News strongly disagree
-        final_confidence = round(final_confidence * 0.7, 4)
+    if news_override:
+        logger.info(
+            f"  {ticker}: BAYESIAN MAJOR NEWS SHIFT — {news_dir.upper()} "
+            f"(conf={news_conf:.2f}, LR={lr_news:.2f}) updated ML prior ({ml_prob:.3f} → {final_prob:.3f})"
+        )
+    elif conflicting:
         logger.warning(
-            f"  {ticker}: CONFLICTING SIGNALS — "
-            f"ML={ml_dir} vs News={news_dir} "
-            f"(confidence reduced to {final_confidence:.3f})"
+            f"  {ticker}: BAYESIAN CONFLICT DAMPENING — ML={ml_dir} ({ml_prob:.3f}) vs News={news_dir} "
+            f"(Posterior={final_prob:.3f}, Confidence={final_confidence:.3f})"
         )
     else:
         logger.info(
-            f"  {ticker}: ML+News → {final_direction.upper()} "
-            f"(prob={final_prob:.3f}, conf={final_confidence:.3f}, agree={signals_agree})"
+            f"  {ticker}: BAYESIAN FUSION — ML+News → {final_direction.upper()} "
+            f"(prob={final_prob:.3f}, conf={final_confidence:.3f})"
         )
 
     return {
@@ -239,10 +202,11 @@ def combine_with_news_signal(ml_signal: dict, news_signal: dict) -> dict:
         "final_probability_up":  round(final_prob, 4),
         "final_direction":       final_direction,
         "final_confidence":      final_confidence,
-        "signal_sources":        ["lgbm", "chronos", "regime", "news"],
+        "signal_sources":        ["lgbm", "chronos", "regime", "news_bayesian"],
         "signals_agree":         signals_agree,
         "conflicting_signals":   conflicting,
-        "news_override":         False,
+        "news_override":         news_override,
+        "bayes_lr_news":         round(lr_news, 4),
         "ml_signal":             ml_signal,
         "news_signal":           news_signal,
         "reasoning":             news_reason,
