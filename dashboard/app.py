@@ -239,27 +239,89 @@ st.markdown("""
         border-radius: 4px;
     }
 
-    /* Tab Styling */
+    /* Custom Pill Tabs */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background-color: rgba(22, 27, 34, 0.8);
-        backdrop-filter: blur(10px);
-        padding: 6px;
-        border-radius: 10px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        gap: 10px !important;
+        background: rgba(22, 27, 34, 0.65) !important;
+        backdrop-filter: blur(20px) !important;
+        padding: 6px 10px !important;
+        border-radius: 30px !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
     }
     .stTabs [data-baseweb="tab"] {
-        height: 42px;
-        white-space: pre;
-        border-radius: 6px;
-        color: #8B949E;
-        font-weight: 600;
-        font-size: 0.88rem;
+        height: 38px !important;
+        border-radius: 20px !important;
+        color: #8B949E !important;
+        font-weight: 600 !important;
+        font-size: 0.86rem !important;
+        padding: 0 18px !important;
+        border: 1px solid transparent !important;
+        transition: all 0.25s ease !important;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        color: #FFFFFF !important;
+        background: rgba(255, 255, 255, 0.05) !important;
     }
     .stTabs [aria-selected="true"] {
-        background-color: #21262D !important;
+        background: linear-gradient(135deg, rgba(88, 166, 255, 0.25), rgba(63, 185, 80, 0.25)) !important;
         color: #58A6FF !important;
-        border: 1px solid rgba(88, 166, 255, 0.3);
+        border: 1px solid rgba(88, 166, 255, 0.5) !important;
+        box-shadow: 0 0 16px rgba(88, 166, 255, 0.25) !important;
+    }
+
+    /* Customized Segmented Control Radio Buttons */
+    div[data-testid="stRadio"] > div {
+        background: rgba(22, 27, 34, 0.75) !important;
+        backdrop-filter: blur(16px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 30px !important;
+        padding: 4px 6px !important;
+        display: inline-flex !important;
+        gap: 4px !important;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3) !important;
+    }
+    div[data-testid="stRadio"] label {
+        background: transparent !important;
+        border-radius: 20px !important;
+        padding: 6px 16px !important;
+        color: #8B949E !important;
+        font-weight: 600 !important;
+        font-size: 0.84rem !important;
+        transition: all 0.25s ease !important;
+        cursor: pointer !important;
+        border: 1px solid transparent !important;
+    }
+    div[data-testid="stRadio"] label:hover {
+        color: #FFFFFF !important;
+        background: rgba(255, 255, 255, 0.06) !important;
+    }
+    div[data-testid="stRadio"] label[data-checked="true"] {
+        background: linear-gradient(135deg, rgba(31, 111, 235, 0.4), rgba(35, 134, 54, 0.4)) !important;
+        color: #FFFFFF !important;
+        border: 1px solid rgba(88, 166, 255, 0.4) !important;
+        box-shadow: 0 0 15px rgba(88, 166, 255, 0.25) !important;
+    }
+    div[data-testid="stRadio"] label p {
+        font-weight: 600 !important;
+        font-size: 0.84rem !important;
+    }
+
+    /* Customized Action Buttons */
+    div.stButton > button {
+        background: linear-gradient(135deg, rgba(31, 111, 235, 0.8), rgba(35, 134, 54, 0.8)) !important;
+        color: #FFFFFF !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        border-radius: 20px !important;
+        padding: 8px 22px !important;
+        font-weight: 600 !important;
+        font-size: 0.88rem !important;
+        transition: all 0.3s ease !important;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3) !important;
+    }
+    div.stButton > button:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 0 20px rgba(0, 229, 255, 0.4) !important;
+        border-color: rgba(88, 166, 255, 0.6) !important;
     }
 
     /* Live Telemetry Pulse Animation */

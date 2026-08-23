@@ -55,6 +55,36 @@ st.markdown("""
     .kpi-card.wrong { border-bottom: 3px solid #F85149; }
     .kpi-num { font-size: 2rem; font-weight: 700; }
     .kpi-lab { font-size: 0.82rem; color: #8B949E; }
+
+    /* Custom Pill Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px !important;
+        background: rgba(22, 27, 34, 0.65) !important;
+        backdrop-filter: blur(20px) !important;
+        padding: 6px 10px !important;
+        border-radius: 30px !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 38px !important;
+        border-radius: 20px !important;
+        color: #8B949E !important;
+        font-weight: 600 !important;
+        font-size: 0.86rem !important;
+        padding: 0 18px !important;
+        border: 1px solid transparent !important;
+        transition: all 0.25s ease !important;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        color: #FFFFFF !important;
+        background: rgba(255, 255, 255, 0.05) !important;
+    }
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, rgba(88, 166, 255, 0.25), rgba(63, 185, 80, 0.25)) !important;
+        color: #58A6FF !important;
+        border: 1px solid rgba(88, 166, 255, 0.5) !important;
+        box-shadow: 0 0 16px rgba(88, 166, 255, 0.25) !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
