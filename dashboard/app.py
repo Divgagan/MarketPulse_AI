@@ -477,6 +477,63 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ── Pipeline Schedule Banner ─────────────────────────────────────────────────
+def get_next_pipeline_run() -> str:
+    """Returns a human-readable string of the next scheduled pipeline run in IST."""
+    now_ist = datetime.now(IST)
+    weekday = now_ist.weekday()  # 0=Mon, 6=Sun
+
+    # EOD full pipeline: 3:45 PM IST Mon-Fri
+    # News cycle: every 30 min from 6:30 AM to 6:00 PM IST Mon-Fri
+    ist_hour, ist_min = now_ist.hour, now_ist.minute
+    total_min_now = ist_hour * 60 + ist_min
+
+    if weekday < 5:  # It's a weekday
+        # Check next news cycle (every 30 min, 6:30 AM to 6:00 PM IST)
+        news_start = 6 * 60 + 30   # 6:30 AM
+        news_end   = 18 * 60       # 6:00 PM
+        eod_time   = 15 * 60 + 45  # 3:45 PM
+
+        if news_start <= total_min_now < news_end:
+            # Find next 30-min slot
+            next_slot_min = (total_min_now // 30 + 1) * 30
+            if next_slot_min == eod_time:
+                return "📊 EOD ML Pipeline in ~" + str(eod_time - total_min_now) + " min (3:45 PM IST)"
+            if next_slot_min <= news_end:
+                delta = next_slot_min - total_min_now
+                return f"📰 News Cycle in ~{delta} min · 📊 EOD ML at 3:45 PM IST"
+        if total_min_now < news_start:
+            delta = news_start - total_min_now
+            return f"📰 News Cycle starts in ~{delta} min (6:30 AM IST) · 📊 EOD ML at 3:45 PM IST"
+        if total_min_now >= news_end:
+            return "✅ Today's pipeline complete · Next run: Tomorrow 6:30 AM IST"
+
+    # Weekend
+    days_to_mon = (7 - weekday) % 7 or 7
+    return f"📅 Next pipeline: Monday 6:30 AM IST ({days_to_mon} day(s) away)"
+
+next_run_str = get_next_pipeline_run()
+
+st.markdown(
+    f"""
+    <div style="background: rgba(22,27,34,0.7); backdrop-filter: blur(12px);
+                border: 1px solid rgba(255,255,255,0.07); border-radius: 10px;
+                padding: 0.65rem 1.2rem; margin-bottom: 1rem;
+                display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div style="font-size: 0.82rem; color: #8B949E;">
+            <span style="color: #58A6FF; font-weight: 600;">⏱ Automated Schedule (IST, Mon–Fri):</span>
+            &nbsp; 📰 <strong style="color:#C9D1D9">News Cycle</strong> — every 30 min, 6:30 AM → 6:00 PM
+            &nbsp;|&nbsp; 📊 <strong style="color:#C9D1D9">EOD ML Pipeline</strong> — daily at <strong style="color:#3FB950">3:45 PM IST</strong>
+            &nbsp;|&nbsp; 🔄 <strong style="color:#C9D1D9">Monthly Retrain</strong> — 1st of month, 8:00 PM IST
+        </div>
+        <div style="font-size: 0.82rem; font-weight: 600; color: #D29922;">
+            {next_run_str}
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
 # ── Load Data ─────────────────────────────────────────────────────────────────
 df_all = load_all_predictions()
 
@@ -765,7 +822,7 @@ with tab3:
 
     t1, t2, t3, t4 = st.columns(4)
 
-    t1.metric("Pipeline Schedule", "8:15 AM IST Daily")
+    t1.metric("Pipeline Schedule", "News: 6:30AM–6PM (30min) · EOD ML: 3:45PM IST")
     
     unique_model_tickers = set([f.name.split('_lgb')[0] for f in MODELS_DIR.glob("*_lgb.pkl") if f.name.split('_lgb')[0] in ACTIVE_STOCKS]) if MODELS_DIR.exists() else set()
     model_count = min(len(unique_model_tickers), 100) if unique_model_tickers else 100

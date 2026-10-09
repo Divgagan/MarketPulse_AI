@@ -2,47 +2,47 @@ name: MarketPulse EOD Pipeline
 
 on:
   schedule:
-    # Run every weekday (Mon-Fri) at 17:00 IST (11:30 UTC)
-    - cron: '30 11 * * 1-5'
+    # Run every weekday (Mon-Fri) at 3:45 PM IST = 10:15 AM UTC
+    - cron: '15 10 * * 1-5'
   workflow_dispatch: # Allow manual triggering from the GitHub Actions tab
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+    timeout-minutes: 55
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
-
-    - name: Cache dependencies
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
+        python-version: '3.12'
+        cache: 'pip'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        python -m nltk.downloader punkt vader_lexicon
+        pip install -r requirements_pipeline.txt
+        python -m spacy download en_core_web_sm
 
-    - name: Run EOD Pipeline
+    - name: Run EOD Pipeline (+ email alert)
       env:
+        PYTHONPATH: "."
         GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        LANGCHAIN_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+        LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
         LANGCHAIN_TRACING_V2: "true"
         LANGCHAIN_PROJECT: "marketpulse-ai"
         SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
         SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
         RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
       run: |
+        echo "=== MarketPulse AI — EOD Pipeline starting at $(date -u) ==="
         python -m pipeline.eod_pipeline
+        echo "=== EOD Pipeline finished at $(date -u) ==="
+

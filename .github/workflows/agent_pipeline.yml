@@ -86,7 +86,26 @@ jobs:
         RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
       run: |
         echo "=== Starting News Cycle Pipeline at $(date -u) ==="
-        python -c "from agents.graph import run_pipeline; run_pipeline('news_cycle')"
+        python -c "
+from agents.graph import run_pipeline
+from pipeline.send_alerts import send_email_alert
+import pandas as pd
+
+result = run_pipeline('news_cycle')
+signals = result.get('final_signals', [])
+if signals:
+    df = pd.DataFrame([{
+        'ticker':              s.get('ticker'),
+        'predicted_direction': s.get('final_direction'),
+        'final_confidence':    s.get('final_confidence'),
+        'signal_strength':     s.get('signal_strength'),
+        'alert_text':          s.get('alert_text', ''),
+    } for s in signals])
+    send_email_alert(df)
+    print(f'Email alert sent for {len(signals)} signals.')
+else:
+    print('No strong signals this cycle — skipping email.')
+"
         echo "=== News Cycle Pipeline Finished at $(date -u) ==="
 
     # ── Monthly Retraining + Drift Check: 1st of every month at 8 PM IST ───

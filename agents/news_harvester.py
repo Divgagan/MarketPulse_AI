@@ -13,7 +13,8 @@ Sources:
   4. Business Standard Markets RSS
   5. NDTV Profit RSS
   6. Economic Times Default RSS
-  + NewsAPI (if NEWSAPI_KEY is set in .env)
+  + NewsAPI (if NEWSAPI_KEY is set in .env  but since Im making this proeject for the demo and the Handsonpractice on Agentic AI so 
+  Im using only  6 RSS feeds NEWS only )
 
 Deduplication:
   - MD5 hash of article URL = article ID
@@ -358,6 +359,9 @@ def _sync_articles_to_supabase(articles: List[NewsArticle]) -> None:
         logger.debug("Supabase credentials not set — skipping article cloud sync")
         return
 
+    if not articles:
+        return
+
     try:
         from supabase import create_client
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -375,12 +379,23 @@ def _sync_articles_to_supabase(articles: List[NewsArticle]) -> None:
             for a in articles
         ]
 
-        # Upsert — safe to call multiple times (no duplicates)
-        supabase.table("articles").upsert(payload, on_conflict="id,fetch_date").execute()
-        logger.info(f"  Cloud sync: {len(payload)} articles saved to Supabase")
+        # Batch in chunks of 50 to stay within Supabase free-tier row limits per request
+        chunk_size = 50
+        total_pushed = 0
+        for i in range(0, len(payload), chunk_size):
+            chunk = payload[i : i + chunk_size]
+            try:
+                # Use upsert without on_conflict for maximum compatibility
+                supabase.table("articles").upsert(chunk).execute()
+                total_pushed += len(chunk)
+            except Exception as chunk_err:
+                logger.warning(f"  Supabase chunk upsert failed (rows {i}-{i+len(chunk)}): {chunk_err}")
+
+        logger.info(f"  Cloud sync: {total_pushed}/{len(payload)} articles saved to Supabase ✅")
 
     except Exception as e:
         logger.warning(f"  Supabase article sync failed (non-fatal): {e}")
+
 
 
 # ── LangGraph Node Function ────────────────────────────────────────────────────

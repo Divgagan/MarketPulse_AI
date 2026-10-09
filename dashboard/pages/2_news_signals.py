@@ -4,7 +4,7 @@ dashboard/pages/2_news_signals.py — MarketPulse AI
 Blueprint Part 18 File 3: News Intelligence Page.
 
 Features:
-  - Timeline of relevant articles processed today
+  - Timeline of relevant articles processed today (or most recent available)
   - Each article: headline, source, timestamp, affected stocks, relevance score
   - Expandable: full 4-stage filter pipeline results
   - Macro triggers detected today with stock count
@@ -12,10 +12,11 @@ Features:
 
 import sqlite3
 import sys, os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 import plotly.express as px
+import pytz
 import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -24,7 +25,8 @@ from config.settings import DATA_DIR
 
 st.set_page_config(page_title="News Signals · MarketPulse AI", page_icon="📰", layout="wide")
 
-ARTICLES_DB    = str(DATA_DIR / "predictions" / "articles.db")
+ARTICLES_DB = str(DATA_DIR / "predictions" / "articles.db")
+IST = pytz.timezone("Asia/Kolkata")
 
 st.markdown("""
 <style>
@@ -48,40 +50,139 @@ st.caption("All news articles processed through the 4-stage AI filter pipeline t
 
 
 
-def load_articles() -> pd.DataFrame:
-    """Load today's fetched articles from Supabase (cloud) or SQLite (local fallback)."""
+@st.cache_data(ttl=300)
+def load_articles(selected_date: str = None) -> pd.DataFrame:
+    """
+    Load articles from Supabase (cloud) or SQLite (local fallback).
+    If selected_date is None, loads the most recent available date.
+    Falls back to last 7 days if today has no data.
+    """
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    query_date = selected_date or today
+
     try:
         from config.settings import SUPABASE_URL, SUPABASE_KEY
         if SUPABASE_URL and SUPABASE_KEY:
             from supabase import create_client
             supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+            # Try the selected/today date first
             res = supabase.table("articles").select("*") \
-                          .eq("fetch_date", today) \
-                          .order("fetched_at", desc=True).execute()
+                          .eq("fetch_date", query_date) \
+                          .order("fetched_at", desc=True).limit(200).execute()
             if res.data:
                 return pd.DataFrame(res.data)
-            # If no data in Supabase, fall through to SQLite
+
+            # If nothing today, get the most recent date that has data
+            if not selected_date:
+                res2 = supabase.table("articles").select("*") \
+                               .order("fetch_date", desc=True) \
+                               .order("fetched_at", desc=True) \
+                               .limit(200).execute()
+                if res2.data:
+                    return pd.DataFrame(res2.data)
     except Exception as e:
-        st.caption(f"Cloud load skipped: {e}")
+        st.caption(f"☁️ Cloud load skipped: {e}")
 
     # Local SQLite fallback
     try:
         conn = sqlite3.connect(ARTICLES_DB)
-        df   = pd.read_sql_query(
-            "SELECT * FROM articles WHERE fetch_date = ? ORDER BY fetched_at DESC",
-            conn, params=(today,)
-        )
+        if selected_date:
+            df = pd.read_sql_query(
+                "SELECT * FROM articles WHERE fetch_date = ? ORDER BY fetched_at DESC",
+                conn, params=(query_date,)
+            )
+        else:
+            # Get the most recent date available
+            df = pd.read_sql_query(
+                "SELECT * FROM articles ORDER BY fetch_date DESC, fetched_at DESC LIMIT 200",
+                conn
+            )
         conn.close()
         return df
     except Exception:
         return pd.DataFrame()
 
 
+def get_available_dates() -> list:
+    """Get list of dates that have article data (last 7 days)."""
+    dates = []
+    try:
+        from config.settings import SUPABASE_URL, SUPABASE_KEY
+        if SUPABASE_URL and SUPABASE_KEY:
+            from supabase import create_client
+            supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+            week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+            res = supabase.table("articles").select("fetch_date") \
+                          .gte("fetch_date", week_ago).execute()
+            if res.data:
+                dates = sorted(set(r["fetch_date"] for r in res.data), reverse=True)
+                return dates
+    except Exception:
+        pass
+    try:
+        conn = sqlite3.connect(ARTICLES_DB)
+        cursor = conn.execute(
+            "SELECT DISTINCT fetch_date FROM articles ORDER BY fetch_date DESC LIMIT 7"
+        )
+        dates = [row[0] for row in cursor.fetchall()]
+        conn.close()
+    except Exception:
+        pass
+    return dates
+
+
+
+# ── Date Selector ────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+    .schedule-info {
+        background: rgba(56,139,253,0.1); border: 1px solid rgba(88,166,255,0.3);
+        border-radius: 8px; padding: 0.6rem 1rem; margin-bottom: 1rem;
+        font-size: 0.82rem; color: #8B949E;
+    }
+    .schedule-info strong { color: #58A6FF; }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class="schedule-info">
+    ⏱ <strong>Pipeline Schedule:</strong>
+    📰 News Cycle — every 30 min, 6:30 AM → 6:00 PM IST (Mon–Fri)
+    &nbsp;|&nbsp;
+    📊 EOD ML Pipeline — daily at <strong>3:45 PM IST</strong> (Mon–Fri)
+</div>
+""", unsafe_allow_html=True)
+
+available_dates = get_available_dates()
+today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+date_col, refresh_col = st.columns([3, 1])
+with date_col:
+    if available_dates:
+        selected_date = st.selectbox(
+            "📅 View articles for date:",
+            options=available_dates,
+            index=0,
+            format_func=lambda d: f"{d}" + (" (today)" if d == today else ""),
+        )
+    else:
+        selected_date = today
+        st.info("No article data found yet. The pipeline will populate this once it runs.")
+with refresh_col:
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("🔄 Refresh"):
+        st.cache_data.clear()
+        st.rerun()
 
 # ── Summary ────────────────────────────────────────────────────────────────────
-articles_df = load_articles()
+articles_df = load_articles(selected_date if available_dates else None)
 total_fetched = len(articles_df)
+
+# Show which date's data is displayed
+data_date = articles_df["fetch_date"].iloc[0] if not articles_df.empty and "fetch_date" in articles_df.columns else today
+if data_date != today:
+    st.warning(f"⚠️ Showing articles from **{data_date}** (no data found for today yet — pipeline runs at 3:45 PM IST).")
 
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -149,10 +250,16 @@ st.markdown("---")
 st.subheader("📋 Article Timeline")
 
 if articles_df.empty:
-    st.info(
-        "No articles loaded yet. "
-        "The news harvester runs every 30 min during market hours (9 AM–6 PM IST)."
-    )
+    now_ist = datetime.now(IST)
+    total_min = now_ist.hour * 60 + now_ist.minute
+    is_market_hours = (now_ist.weekday() < 5) and (6 * 60 + 30 <= total_min <= 18 * 60)
+    next_30 = ((total_min // 30) + 1) * 30
+    delta   = next_30 - total_min
+    if is_market_hours:
+        msg = f"📰 No articles fetched yet. Next news cycle runs in ~**{delta} min**. Refresh this page after that."
+    else:
+        msg = "📰 No articles fetched today. The news harvester runs Mon–Fri, 6:30 AM–6:00 PM IST (every 30 min)."
+    st.info(msg)
 else:
     # Source filter
     sources = ["All Sources"] + sorted(articles_df["source"].unique().tolist())
